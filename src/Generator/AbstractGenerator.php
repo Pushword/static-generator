@@ -37,7 +37,7 @@ abstract class AbstractGenerator
 
     protected $staticDomain;
 
-    /** var @string */
+    /** @var string */
     protected $staticDir;
 
     protected RequestStack $requesStack;
