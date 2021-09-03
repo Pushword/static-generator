@@ -19,7 +19,7 @@ class MediaGenerator extends AbstractGenerator
     protected function copyMediaToDownload()
     {
         $publicMediaDir = $this->params->get('pw.public_media_dir');
-        $mediaDir = $this->params->get('pw.media_dir');
+        $mediaDir = (string) $this->params->get('pw.media_dir');
         $staticMediaDir = $this->getStaticDir().'/'.$publicMediaDir;
 
         $symlink = $this->mustSymlink();
