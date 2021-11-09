@@ -6,6 +6,7 @@ use Exception;
 use Pushword\Admin\PushwordAdminBundle;
 use Pushword\Core\Entity\PageInterface as Page;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
 
 class PageGenerator extends AbstractGenerator
 {
@@ -72,37 +73,52 @@ class PageGenerator extends AbstractGenerator
         $request = Request::create($liveUri);
         //$request->headers->set('host', $this->app->getMainHost());
 
-        $response = static::$appKernel->handle($request);
+        $response = static::getKernel()->handle($request);
 
         if ($response->isRedirect()) {
-            if ($response->headers->get('location')) {
+            if (null !== $response->headers->get('location')) {
                 $this->redirectionManager->add($liveUri, $response->headers->get('location'), $response->getStatusCode());
             }
 
             return;
-        } elseif (200 != $response->getStatusCode()) {
-            //$this->kernel = static::$appKernel;
+        }
+        if (200 != $response->getStatusCode()) {
             if (500 === $response->getStatusCode() && 'dev' == $this->kernel->getEnvironment()) {
-                $identifier = null !== $page && class_exists(PushwordAdminBundle::class) ?
-                     '['.$liveUri.']('.$this->router->getRouter()->generate('admin_app_page_edit', ['id' => $page->getId()]).')'
-                     : $liveUri;
-                $this->setError('An error occured when generating '.$identifier.'');
-                //throw new Exception('An error occured when generating `'.$liveUri.'`'); //exit($this->kernel->handle($request));
+                $this->setErrorFor($liveUri, $page);
             }
 
             return;
         }
 
-        if (false !== strpos($response->headers->all()['content-type'][0] ?? '', 'html') && null !== $page) {
-            if (false !== strpos($response->getContent(), '<!-- pager:')) {
-                $this->extractPager($page, $response->getContent());
+        $content = $response->getContent();
+        if (false === $content) {
+            $this->setErrorFor($liveUri, $page);
+
+            return;
+        }
+
+        if ($this->responseIsHtml($response) && null !== $page) {
+            if (false !== strpos($content, '<!-- pager:')) {
+                $this->extractPager($page, $content);
             }
-            $content = $this->compress($response->getContent());
-        } else {
-            $content = $response->getContent();
+            $content = $this->compress($content);
         }
 
         $this->filesystem->dumpFile($destination, $content);
+    }
+
+    private function setErrorFor(string $liveUri, ?Page $page = null): void
+    {
+        $identifier = null !== $page && class_exists(PushwordAdminBundle::class) ?
+                     '['.$liveUri.']('.$this->router->getRouter()->generate('admin_app_page_edit', ['id' => $page->getId()]).')'
+                     : $liveUri;
+        $this->setError('An error occured when generating '.$identifier.'');
+        //throw new Exception('An error occured when generating `'.$liveUri.'`'); //exit($this->kernel->handle($request));
+    }
+
+    private function responseIsHtml(Response $response): bool
+    {
+        return false !== strpos($response->headers->all()['content-type'][0] ?? '', 'html');
     }
 
     private function extractPager(Page $page, string $content): void

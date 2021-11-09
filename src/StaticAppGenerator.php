@@ -87,7 +87,7 @@ final class StaticAppGenerator
             $this->getGenerator(\strval($generator))->generate();
         }
 
-        if (! $this->abortGeneration) {
+        if (false === $this->abortGeneration) {
             $filesystem->remove($staticDir);
             $filesystem->rename($staticDir.'~', $staticDir);
             $filesystem->remove($staticDir.'~');

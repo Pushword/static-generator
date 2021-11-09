@@ -36,8 +36,6 @@ abstract class AbstractGenerator implements GeneratorInterface
 
     protected AppConfig $app;
 
-    protected $staticDomain;
-
     protected string $staticDir;
 
     protected RequestStack $requestStack;
@@ -71,16 +69,16 @@ abstract class AbstractGenerator implements GeneratorInterface
         $this->router = $router;
         $this->router->setUseCustomHostPath(false);
         $this->apps = $apps;
-        $this->publicDir = (string) $params->get('pw.public_dir');
+        $this->publicDir = \strval($params->get('pw.public_dir'));
         $this->parser = HtmlCompressor::construct();
-
-        if (! method_exists($this->filesystem, 'dumpFile')) {
-            throw new \RuntimeException('Method dumpFile() is not available. Upgrade your Filesystem.');
-        }
 
         static::loadKernel($kernel);
         $this->kernel = $kernel;
-        static::$appKernel->getContainer()->get('pushword.router')->setUseCustomHostPath(false);
+
+        $newKernelRouter = static::getKernel()->getContainer()->get('pushword.router');
+        if ($newKernelRouter instanceof RouterInterface) {
+            $newKernelRouter->setUseCustomHostPath(false);
+        }
     }
 
     public function generate(?string $host = null): void
@@ -98,7 +96,8 @@ abstract class AbstractGenerator implements GeneratorInterface
      */
     protected function mustSymlink(): bool
     {
-        return \in_array(CNAMEGenerator::class, $this->app->get('static_generators')) ? false
+        return \is_array($this->app->get('static_generators'))
+            && \in_array(CNAMEGenerator::class, $this->app->get('static_generators'), true) ? false
             : $this->app->get('static_symlink');
     }
 
@@ -114,7 +113,7 @@ abstract class AbstractGenerator implements GeneratorInterface
 
     protected function getStaticDir(): string
     {
-        return $this->app->get('static_dir');
+        return \strval($this->app->get('static_dir'));
     }
 
     protected function getPageRepository(): PageRepositoryInterface

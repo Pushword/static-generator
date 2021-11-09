@@ -41,7 +41,7 @@ class Configuration implements ConfigurationInterface
 
     public const DEFAULT_COPY = ['assets', 'bundles', 'media'];
 
-    public function getConfigTreeBuilder()
+    public function getConfigTreeBuilder(): TreeBuilder
     {
         $treeBuilder = new TreeBuilder('static_generator');
         $treeBuilder->getRootNode()->children()
@@ -62,7 +62,7 @@ class Configuration implements ConfigurationInterface
                 ->defaultValue('%kernel.project_dir%/%main_host%')
                 ->info('If null or empty, static dir will be %kernel.project_dir%/host.tld/.')
                 ->validate()
-                    ->ifTrue(function ($value) { return ! self::isAbsolutePath($value); })
+                    ->ifTrue(function ($value): bool { return false === self::isAbsolutePath($value); })
                     ->thenInvalid('Invalid static dir path `%s`, it must be absolute (eg: /home/pushword/host.tld/)')
                 ->end()
             ->end()
