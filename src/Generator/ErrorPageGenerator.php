@@ -22,7 +22,7 @@ class ErrorPageGenerator extends AbstractGenerator
     }
 
     // TODO : make it useful when using a .htaccess else disable it
-    protected function generateErrorPage($locale = null, $uri = '404.html')
+    protected function generateErrorPage($locale = null, $uri = '404.html'): void
     {
         if (null !== $locale) {
             $request = $this->requestStack->getCurrentRequest();

@@ -59,7 +59,7 @@ final class StaticAppGenerator
     {
         $this->apps->switchCurrentApp($host)->get();
 
-        /** @var PagesGenerator */
+        /** @var PagesGenerator $pagesGenerator */
         $pagesGenerator = $this->getGenerator(PagesGenerator::class);
         $pagesGenerator->generatePageBySlug($page);
 

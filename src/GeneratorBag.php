@@ -38,10 +38,6 @@ class GeneratorBag
     /** @var array<string, GeneratorInterface> */
     private array $bag = [];
 
-    public function __construct()
-    {
-    }
-
     protected function classNameToPropertyName(string $name): string
     {
         $name = explode('\\', $name);
@@ -54,7 +50,7 @@ class GeneratorBag
         $name = $this->classNameToPropertyName(\get_class($generator));
 
         if (property_exists($this, $name)) {
-            $this->$name = $generator;
+            $this->$name = $generator; // @phpstan-ignore-line
         } else {
             $this->bag[$name] = $generator;
         }
@@ -65,7 +61,7 @@ class GeneratorBag
         $name = $this->classNameToPropertyName($name);
 
         if (property_exists($this, $name)) {
-            return $this->$name;
+            return $this->$name; // @phpstan-ignore-line
         }
 
         return $this->bag[$name];

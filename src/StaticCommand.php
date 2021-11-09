@@ -50,7 +50,7 @@ class StaticCommand extends Command
 
     private function printStatus(OutputInterface $output, string $successMessage): void
     {
-        if ($this->staticAppGenerator->getErrors()) {
+        if ([] !== $this->staticAppGenerator->getErrors()) {
             foreach ($this->staticAppGenerator->getErrors() as $error) {
                 $output->writeln($error);
             }

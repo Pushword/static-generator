@@ -112,7 +112,7 @@ class PageGenerator extends AbstractGenerator
         $this->saveAsStatic(rtrim($this->generateLivePathFor($page), '/').'/'.$pager, $this->generateFilePath($page, $pager), $page);
     }
 
-    protected function compress($html)
+    protected function compress(string $html): string
     {
         return $this->parser->compress($html);
     }
