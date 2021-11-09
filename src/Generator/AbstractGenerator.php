@@ -9,6 +9,7 @@ use Pushword\Core\Repository\PageRepositoryInterface;
 use Pushword\Core\Router\RouterInterface;
 use Pushword\Core\Utils\GenerateLivePathForTrait;
 use Pushword\Core\Utils\KernelTrait;
+use Pushword\StaticGenerator\StaticAppGenerator;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\HttpFoundation\RequestStack;
@@ -18,7 +19,7 @@ use Twig\Environment as Twig;
 use WyriHaximus\HtmlCompress\Factory as HtmlCompressor;
 use WyriHaximus\HtmlCompress\HtmlCompressorInterface;
 
-abstract class AbstractGenerator
+abstract class AbstractGenerator implements GeneratorInterface
 {
     use GenerateLivePathForTrait;
     use KernelTrait;
@@ -37,8 +38,7 @@ abstract class AbstractGenerator
 
     protected $staticDomain;
 
-    /** @var string */
-    protected $staticDir;
+    protected string $staticDir;
 
     protected RequestStack $requestStack;
 
@@ -49,6 +49,8 @@ abstract class AbstractGenerator
     protected ParameterBagInterface $params;
 
     protected RouterInterface $router;
+
+    protected StaticAppGenerator $staticAppGenerator;
 
     public function __construct(
         PageRepositoryInterface $pageRepository,
@@ -118,5 +120,17 @@ abstract class AbstractGenerator
     protected function getPageRepository(): PageRepositoryInterface
     {
         return $this->pageRepository;
+    }
+
+    public function setStaticAppGenerator(StaticAppGenerator $staticAppGenerator): self
+    {
+        $this->staticAppGenerator = $staticAppGenerator;
+
+        return $this;
+    }
+
+    protected function setError(string $errorMessage): void
+    {
+        $this->staticAppGenerator->setError($errorMessage);
     }
 }

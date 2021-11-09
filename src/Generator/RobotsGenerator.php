@@ -18,7 +18,7 @@ class RobotsGenerator extends PageGenerator
         }
     }
 
-    protected function generateSitemap($locale, $format)
+    protected function generateSitemap(string $locale, string $format): void
     {
         $liveUri = $this->generateLivePathFor(
             $this->app->getMainHost(),
@@ -35,9 +35,9 @@ class RobotsGenerator extends PageGenerator
         $this->saveAsStatic($liveUri, $staticFile);
     }
 
-    protected function generateFeed($locale)
+    protected function generateFeed(string $locale): void
     {
-        if (! $this->getPageRepository()->getPage('homepage', $this->app->getMainHost())) {
+        if (null === $this->getPageRepository()->getPage('homepage', $this->app->getMainHost())) {
             return;
             // we can't generate main feed if no homepage exist
             // because mainFeed rely on homepage data
@@ -58,7 +58,7 @@ class RobotsGenerator extends PageGenerator
         $this->saveAsStatic($liveUri, $staticFile);
     }
 
-    protected function generateRobotsTxt($locale)
+    protected function generateRobotsTxt(string $locale): void
     {
         $liveUri = $this->generateLivePathFor(
             $this->app->getMainHost(),

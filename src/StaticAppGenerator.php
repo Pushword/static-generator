@@ -3,6 +3,7 @@
 namespace Pushword\StaticGenerator;
 
 use Pushword\Core\Component\App\AppPool;
+use Pushword\StaticGenerator\Generator\GeneratorInterface;
 use Pushword\StaticGenerator\Generator\PagesGenerator;
 use Pushword\StaticGenerator\Generator\RedirectionManager;
 use Symfony\Component\Filesystem\Filesystem;
@@ -10,18 +11,18 @@ use Symfony\Component\Filesystem\Filesystem;
 /**
  * Generate 1 App.
  */
-class StaticAppGenerator
+final class StaticAppGenerator
 {
-    /**
-     * @var AppPool
-     */
-    protected $apps;
+    private AppPool $apps;
 
-    /** @var GeneratorBag */
-    protected $generatorBag;
+    private GeneratorBag $generatorBag;
 
-    /** @var RedirectionManager */
-    protected $redirectionManager;
+    private RedirectionManager $redirectionManager;
+
+    private bool $abortGeneration = false;
+
+    /** @var array<string> */
+    private array $errors = [];
 
     public function __construct(
         AppPool $apps,
@@ -34,7 +35,7 @@ class StaticAppGenerator
     }
 
     /**
-     * @param string $host if null, generate all apps
+     * @param ?string $hostToGenerate if null, generate all apps
      *
      * @return int the number of site generated
      */
@@ -42,7 +43,7 @@ class StaticAppGenerator
     {
         $i = 0;
         foreach ($this->apps->getHosts() as $host) {
-            if ($hostToGenerate && $hostToGenerate != $host) {
+            if (null !== $hostToGenerate && $hostToGenerate != $host) {
                 continue;
             }
 
@@ -54,11 +55,15 @@ class StaticAppGenerator
         return $i;
     }
 
-    public function generatePage($host, string $page)
+    public function generatePage(string $host, string $page): void
     {
         $this->apps->switchCurrentApp($host)->get();
 
-        $this->generatorBag->get(PagesGenerator::class)->generatePageBySlug($page);
+        /** @var PagesGenerator */
+        $pagesGenerator = $this->getGenerator(PagesGenerator::class);
+        $pagesGenerator->generatePageBySlug($page);
+
+        // Warning: no net if the generation failed !
     }
 
     /**
@@ -66,24 +71,47 @@ class StaticAppGenerator
      * @throws \LogicException
      * @psalm-suppress  UndefinedPropertyAssignment
      */
-    protected function generateHost(?string $host)
+    private function generateHost(string $host): void
     {
         $app = $this->apps->switchCurrentApp($host)->get();
 
-        $staticDir = $app->get('static_dir');
-        $app->staticDir = $staticDir.'~';
+        $staticDir = \strval($app->get('static_dir'));
+        $app->staticDir = $staticDir.'~'; // @phpstan-ignore-line
 
         $filesystem = new Filesystem();
         $filesystem->remove($staticDir.'~');
         $filesystem->mkdir($staticDir.'~');
 
-        foreach ($app->get('static_generators') as $generator) {
+        foreach ($app->get('static_generators') as $generator) { // @phpstan-ignore-line
             //dump($generator);
-            $this->generatorBag->get($generator)->generate();
+            $this->getGenerator(\strval($generator))->generate();
         }
 
-        $filesystem->remove($staticDir);
-        $filesystem->rename($staticDir.'~', $staticDir);
-        $filesystem->remove($staticDir.'~');
+        if (! $this->abortGeneration) {
+            $filesystem->remove($staticDir);
+            $filesystem->rename($staticDir.'~', $staticDir);
+            $filesystem->remove($staticDir.'~');
+        }
+
+        $this->abortGeneration = false;
+    }
+
+    private function getGenerator(string $name): GeneratorInterface
+    {
+        return $this->generatorBag->get($name)->setStaticAppGenerator($this);
+    }
+
+    public function setError(string $errorMessage): void
+    {
+        $this->errors[] = $errorMessage;
+        $this->abortGeneration = true;
+    }
+
+    /**
+     * @return array<string>
+     */
+    public function getErrors(): array
+    {
+        return $this->errors;
     }
 }

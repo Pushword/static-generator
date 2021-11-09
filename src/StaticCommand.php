@@ -9,7 +9,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 class StaticCommand extends Command
 {
-    private $staticAppGenerator;
+    private StaticAppGenerator $staticAppGenerator;
 
     public function __construct(StaticAppGenerator $staticAppGenerator)
     {
@@ -17,7 +17,7 @@ class StaticCommand extends Command
         $this->staticAppGenerator = $staticAppGenerator;
     }
 
-    protected function configure()
+    protected function configure(): void
     {
         $this
             ->setName('pushword:static:generate')
@@ -26,24 +26,38 @@ class StaticCommand extends Command
             ->addArgument('page', InputArgument::OPTIONAL);
     }
 
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        if (! $input->getArgument('host')) {
+        if (null === $input->getArgument('host')) {
             $this->staticAppGenerator->generate();
-            $output->writeln('All websites generated witch success.');
+            $this->printStatus($output, 'All websites generated witch success.');
 
             return 0;
         }
 
-        if (! $input->getArgument('page')) {
-            $this->staticAppGenerator->generate($input->getArgument('host'));
-            $output->writeln($input->getArgument('host').' generated witch success.');
+        if (null !== $input->getArgument('page')) {
+            $this->staticAppGenerator->generate(\strval($input->getArgument('host')));
+            $this->printStatus($output, $input->getArgument('host').' generated witch success.');
 
             return 0;
         }
 
-        $this->staticAppGenerator->generatePage($input->getArgument('host'), $input->getArgument('page'));
+        $this->staticAppGenerator->generatePage(\strval($input->getArgument('host')), \strval($input->getArgument('page')));
+        $this->printStatus($output, $input->getArgument('host').'\'s page generated witch success.');
 
         return 0;
+    }
+
+    private function printStatus(OutputInterface $output, string $successMessage): void
+    {
+        if ($this->staticAppGenerator->getErrors()) {
+            foreach ($this->staticAppGenerator->getErrors() as $error) {
+                $output->writeln($error);
+            }
+
+            return;
+        }
+
+        $output->writeln($successMessage);
     }
 }
