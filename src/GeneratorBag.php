@@ -38,6 +38,10 @@ class GeneratorBag
     /** @var array<string, GeneratorInterface> */
     private array $bag = [];
 
+    public function __construct()
+    {
+    }
+
     protected function classNameToPropertyName(string $name): string
     {
         $name = explode('\\', $name);
