@@ -98,14 +98,14 @@ abstract class AbstractGenerator implements GeneratorInterface
     {
         return \is_array($this->app->get('static_generators'))
             && \in_array(CNAMEGenerator::class, $this->app->get('static_generators'), true) ? false
-            : $this->app->get('static_symlink');
+            : \boolval($this->app->get('static_symlink'));
     }
 
     protected function copy(string $file): void
     {
         if (file_exists($file)) {
             copy(
-                str_replace($this->params->get('kernel.project_dir').'/', '../', $this->publicDir.'/'.$file),
+                str_replace(\strval($this->params->get('kernel.project_dir')).'/', '../', $this->publicDir.'/'.$file),
                 $this->getStaticDir().'/'.$file
             );
         }
