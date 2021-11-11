@@ -24,7 +24,7 @@ class PageGenerator extends AbstractGenerator
 
     public function generatePage(Page $page): void
     {
-        if (false !== $page->getRedirection()) {
+        if ($page->hasRedirection()) {
             $this->redirectionManager->addPage($page);
 
             return;
