@@ -43,7 +43,7 @@ final class StaticAppGenerator
     {
         $i = 0;
         foreach ($this->apps->getHosts() as $host) {
-            if (null !== $hostToGenerate && $hostToGenerate != $host) {
+            if (null !== $hostToGenerate && $hostToGenerate !== $host) {
                 continue;
             }
 
@@ -87,7 +87,7 @@ final class StaticAppGenerator
             $this->getGenerator(\strval($generator))->generate();
         }
 
-        if (false === $this->abortGeneration) {
+        if (! $this->abortGeneration) {
             $filesystem->remove($staticDir);
             $filesystem->rename($staticDir.'~', $staticDir);
             $filesystem->remove($staticDir.'~');
