@@ -9,6 +9,8 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 class StaticCommand extends Command
 {
+    protected static $defaultName = 'pushword:static:generate';
+
     private StaticAppGenerator $staticAppGenerator;
 
     public function __construct(StaticAppGenerator $staticAppGenerator)
@@ -19,9 +21,7 @@ class StaticCommand extends Command
 
     protected function configure(): void
     {
-        $this
-            ->setName('pushword:static:generate')
-            ->setDescription('Generate static version  for your website')
+        $this->setDescription('Generate static version  for your website')
             ->addArgument('host', InputArgument::OPTIONAL)
             ->addArgument('page', InputArgument::OPTIONAL);
     }

@@ -82,8 +82,8 @@ class PageGenerator extends AbstractGenerator
 
             return;
         }
-        if (200 != $response->getStatusCode()) {
-            if (500 === $response->getStatusCode() && 'dev' == $this->kernel->getEnvironment()) {
+        if (Response::HTTP_OK != $response->getStatusCode()) {
+            if (Response::HTTP_INTERNAL_SERVER_ERROR === $response->getStatusCode() && 'dev' == $this->kernel->getEnvironment()) {
                 $this->setErrorFor($liveUri, $page);
             }
 
