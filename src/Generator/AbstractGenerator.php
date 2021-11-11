@@ -53,23 +53,23 @@ abstract class AbstractGenerator implements GeneratorInterface
     public function __construct(
         PageRepositoryInterface $pageRepository,
         Twig $twig,
-        ParameterBagInterface $params,
+        ParameterBagInterface $parameterBag,
         RequestStack $requestStack,
         TranslatorInterface $translator,
         RouterInterface $router,
         KernelInterface $kernel,
-        AppPool $apps
+        AppPool $appPool
     ) {
         $this->pageRepository = $pageRepository;
         $this->filesystem = new Filesystem();
         $this->twig = $twig;
-        $this->params = $params;
+        $this->params = $parameterBag;
         $this->requestStack = $requestStack;
         $this->translator = $translator;
         $this->router = $router;
         $this->router->setUseCustomHostPath(false);
-        $this->apps = $apps;
-        $this->publicDir = \strval($params->get('pw.public_dir'));
+        $this->apps = $appPool;
+        $this->publicDir = \strval($parameterBag->get('pw.public_dir'));
         $this->parser = HtmlCompressor::construct();
 
         static::loadKernel($kernel);

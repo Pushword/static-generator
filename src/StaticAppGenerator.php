@@ -25,11 +25,11 @@ final class StaticAppGenerator
     private array $errors = [];
 
     public function __construct(
-        AppPool $apps,
+        AppPool $appPool,
         GeneratorBag $generatorBag,
         RedirectionManager $redirectionManager
     ) {
-        $this->apps = $apps;
+        $this->apps = $appPool;
         $this->generatorBag = $generatorBag;
         $this->redirectionManager = $redirectionManager;
     }

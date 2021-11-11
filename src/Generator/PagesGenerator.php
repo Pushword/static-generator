@@ -23,8 +23,8 @@ class PagesGenerator extends PageGenerator
         $pages = $this->getPageRepository()
             ->getPublishedPages($this->app->getMainHost(), ['slug', 'LIKE', $page]);
 
-        foreach ($pages as $p) {
-            $this->generatePage($p);
+        foreach ($pages as $page) {
+            $this->generatePage($page);
         }
     }
 }
