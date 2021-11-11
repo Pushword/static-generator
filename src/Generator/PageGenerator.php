@@ -39,7 +39,7 @@ class PageGenerator extends AbstractGenerator
     {
         $slug = '' == $page->getRealSlug() ? 'index' : $page->getRealSlug();
 
-        if (preg_match('/.+\.(json|xml)$/i', $page->getRealSlug()) >= 1) {
+        if (\Safe\preg_match('/.+\.(json|xml)$/i', $page->getRealSlug()) >= 1) {
             return $this->getStaticDir().'/'.$slug;
         }
 
@@ -60,7 +60,7 @@ class PageGenerator extends AbstractGenerator
     protected function generateFeedFor(Page $page): void
     {
         $liveUri = $this->generateLivePathFor($page, 'pushword_page_feed');
-        $staticFile = (string) preg_replace('/.html$/', '.xml', $this->generateFilePath($page));
+        $staticFile = (string) \Safe\preg_replace('/.html$/', '.xml', $this->generateFilePath($page));
         if (null === $page->getChildrenPages() || \count($page->getChildrenPages()) < 1) {
             return;
         }
@@ -123,7 +123,7 @@ class PageGenerator extends AbstractGenerator
 
     private function extractPager(Page $page, string $content): void
     {
-        preg_match('#<!-- pager:([0-9]+) -->#', $content, $match);
+        \Safe\preg_match('#<!-- pager:([0-9]+) -->#', $content, $match);
         $pager = (int) $match[1];
         $this->saveAsStatic(rtrim($this->generateLivePathFor($page), '/').'/'.$pager, $this->generateFilePath($page, $pager), $page);
     }

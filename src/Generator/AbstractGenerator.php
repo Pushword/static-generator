@@ -104,7 +104,7 @@ abstract class AbstractGenerator implements GeneratorInterface
     protected function copy(string $file): void
     {
         if (file_exists($file)) {
-            copy(
+            \Safe\copy(
                 str_replace(\strval($this->params->get('kernel.project_dir')).'/', '../', $this->publicDir.'/'.$file),
                 $this->getStaticDir().'/'.$file
             );
