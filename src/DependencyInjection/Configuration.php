@@ -65,8 +65,8 @@ class Configuration implements ConfigurationInterface
             ->variableNode('static_generators')
                 ->defaultValue(static::DEFAULT_GENERATOR)
                 ->validate()
-                    ->ifInArray(['apache'])->then(fn () => static::DEFAULT_GENERATOR)
-                    ->ifInArray(['github'])->then(fn () => static::DEFAULT_GENERATOR_GITHUB)
+                    ->ifInArray(['apache'])->then(fn (): array => static::DEFAULT_GENERATOR)
+                    ->ifInArray(['github'])->then(fn (): array => static::DEFAULT_GENERATOR_GITHUB)
                 ->end()
             ->end()
 
