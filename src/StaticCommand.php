@@ -35,7 +35,7 @@ class StaticCommand extends Command
             return 0;
         }
 
-        if (null !== $input->getArgument('page')) {
+        if (null === $input->getArgument('page')) {
             $this->staticAppGenerator->generate(\strval($input->getArgument('host')));
             $this->printStatus($output, $input->getArgument('host').' generated witch success.');
 
