@@ -14,6 +14,9 @@ use Symfony\Component\Config\Definition\ConfigurationInterface;
 
 class Configuration implements ConfigurationInterface
 {
+    /**
+     * @var string[]
+     */
     public const DEFAULT_APP_FALLBACK = [
         'static_generators',
         'static_symlink',
@@ -21,6 +24,9 @@ class Configuration implements ConfigurationInterface
         'static_copy',
     ];
 
+    /**
+     * @var array<class-string<\Pushword\StaticGenerator\Generator\GeneratorInterface>>
+     */
     public const DEFAULT_GENERATOR = [
         PagesGenerator::class,
         RobotsGenerator::class,
@@ -30,6 +36,9 @@ class Configuration implements ConfigurationInterface
         HtaccessGenerator::class,
     ];
 
+    /**
+     * @var array<class-string<\Pushword\StaticGenerator\Generator\GeneratorInterface>>
+     */
     public const DEFAULT_GENERATOR_GITHUB = [
         PagesGenerator::class,
         RobotsGenerator::class,
@@ -39,6 +48,9 @@ class Configuration implements ConfigurationInterface
         CNAMEGenerator::class,
     ];
 
+    /**
+     * @var string[]
+     */
     public const DEFAULT_COPY = ['assets', 'bundles', 'media'];
 
     public function getConfigTreeBuilder(): TreeBuilder
