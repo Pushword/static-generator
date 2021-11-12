@@ -28,7 +28,7 @@ class MediaGenerator extends AbstractGenerator
         }
 
         $dir = dir($mediaDir);
-        if (false === $dir) {
+        if (\in_array($dir, [null, false], true)) {
             return;
         }
 

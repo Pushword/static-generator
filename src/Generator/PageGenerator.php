@@ -5,6 +5,7 @@ namespace Pushword\StaticGenerator\Generator;
 use Exception;
 use Pushword\Admin\PushwordAdminBundle;
 use Pushword\Core\Entity\PageInterface as Page;
+use Pushword\Core\Utils\F;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -60,8 +61,8 @@ class PageGenerator extends AbstractGenerator
     protected function generateFeedFor(Page $page): void
     {
         $liveUri = $this->generateLivePathFor($page, 'pushword_page_feed');
-        $staticFile = (string) \Safe\preg_replace('/.html$/', '.xml', $this->generateFilePath($page));
-        if (null === $page->getChildrenPages() || \count($page->getChildrenPages()) < 1) {
+        $staticFile = F::preg_replace_str('/.html$/', '.xml', $this->generateFilePath($page));
+        if (\count($page->getChildrenPages()) < 1) {
             return;
         }
 

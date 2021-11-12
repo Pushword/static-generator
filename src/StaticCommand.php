@@ -10,7 +10,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 class StaticCommand extends Command
 {
     /**
-     * @var string
+     * @var string|null
      */
     protected static $defaultName = 'pushword:static:generate';
 
