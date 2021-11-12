@@ -82,6 +82,7 @@ class PageGenerator extends AbstractGenerator
 
             return;
         }
+
         if (Response::HTTP_OK != $response->getStatusCode()) {
             if (Response::HTTP_INTERNAL_SERVER_ERROR === $response->getStatusCode() && 'dev' == $this->kernel->getEnvironment()) {
                 $this->setErrorFor($liveUri, $page);
@@ -101,6 +102,7 @@ class PageGenerator extends AbstractGenerator
             if (str_contains($content, '<!-- pager:')) {
                 $this->extractPager($page, $content);
             }
+
             $content = $this->compress($content);
         }
 

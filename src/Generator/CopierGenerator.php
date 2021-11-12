@@ -19,6 +19,7 @@ class CopierGenerator extends AbstractGenerator
             if (! file_exists($this->publicDir.'/'.$entry)) {
                 continue;
             }
+
             if ($symlink) {
                 $this->filesystem->symlink(
                     str_replace(
@@ -31,6 +32,7 @@ class CopierGenerator extends AbstractGenerator
 
                 continue;
             }
+
             if (is_file($this->publicDir.'/'.$entry)) {
                 $this->filesystem->copy($this->publicDir.'/'.$entry, $this->getStaticDir().'/'.$entry);
             } else {
