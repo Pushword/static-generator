@@ -98,7 +98,7 @@ class PageGenerator extends AbstractGenerator
         }
 
         if ($this->responseIsHtml($response) && null !== $page) {
-            if (false !== strpos($content, '<!-- pager:')) {
+            if (str_contains($content, '<!-- pager:')) {
                 $this->extractPager($page, $content);
             }
             $content = $this->compress($content);
@@ -118,7 +118,7 @@ class PageGenerator extends AbstractGenerator
 
     private function responseIsHtml(Response $response): bool
     {
-        return false !== strpos($response->headers->all()['content-type'][0] ?? '', 'html');
+        return str_contains($response->headers->all()['content-type'][0] ?? '', 'html');
     }
 
     private function extractPager(Page $page, string $content): void
