@@ -76,9 +76,7 @@ abstract class AbstractGenerator implements GeneratorInterface
         $this->kernel = $kernel;
 
         $newKernelRouter = static::getKernel()->getContainer()->get('pushword.router');
-        if ($newKernelRouter instanceof RouterInterface) {
-            $newKernelRouter->setUseCustomHostPath(false);
-        }
+        $newKernelRouter->setUseCustomHostPath(false);
     }
 
     public function generate(?string $host = null): void
