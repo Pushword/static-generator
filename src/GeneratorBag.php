@@ -9,37 +9,24 @@ use Pushword\StaticGenerator\Generator\GeneratorInterface;
 use Pushword\StaticGenerator\Generator\HtaccessGenerator;
 use Pushword\StaticGenerator\Generator\MediaGenerator;
 use Pushword\StaticGenerator\Generator\PagesGenerator;
+use Pushword\StaticGenerator\Generator\RedirectionManager;
 use Pushword\StaticGenerator\Generator\RobotsGenerator;
-use Symfony\Contracts\Service\Attribute\Required;
 
 class GeneratorBag
 {
-    #[Required]
-    public CNAMEGenerator $cNAMEGenerator;
-
-    #[Required]
-    public CopierGenerator $copierGenerator;
-
-    #[Required]
-    public ErrorPageGenerator $errorPageGenerator;
-
-    #[Required]
-    public HtaccessGenerator $htaccessGenerator;
-
-    #[Required]
-    public MediaGenerator $mediaGenerator;
-
-    #[Required]
-    public PagesGenerator $pagesGenerator;
-
-    #[Required]
-    public RobotsGenerator $robotsGenerator;
-
     /** @var array<string, GeneratorInterface> */
     private array $bag = [];
 
-    public function __construct()
-    {
+    public function __construct(
+        private readonly CNAMEGenerator $cNAMEGenerator,
+        private readonly CopierGenerator $copierGenerator,
+        private readonly ErrorPageGenerator $errorPageGenerator,
+        private readonly HtaccessGenerator $htaccessGenerator,
+        private readonly MediaGenerator $mediaGenerator,
+        private readonly PagesGenerator $pagesGenerator,
+        private readonly RobotsGenerator $robotsGenerator,
+        private readonly RedirectionManager $redirectionManager,
+    ) {
     }
 
     protected function classNameToPropertyName(string $name): string
@@ -64,8 +51,9 @@ class GeneratorBag
     {
         $name = $this->classNameToPropertyName($name);
 
-        if (property_exists($this, $name)) {
-            return $this->$name; // @phpstan-ignore-line
+        if (property_exists($this, $name)
+            && ($generator = $this->$name) instanceof GeneratorInterface) {  // @phpstan-ignore-line
+            return $generator;
         }
 
         return $this->bag[$name];

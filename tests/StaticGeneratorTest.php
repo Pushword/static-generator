@@ -12,13 +12,11 @@ use Pushword\StaticGenerator\Generator\HtaccessGenerator;
 use Pushword\StaticGenerator\Generator\MediaGenerator;
 use Pushword\StaticGenerator\Generator\PagesGenerator;
 use Pushword\StaticGenerator\Generator\RedirectionManager;
-use Pushword\StaticGenerator\Generator\RobotsGenerator;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 use Symfony\Component\Filesystem\Filesystem;
-use Symfony\Component\HttpFoundation\RequestStack;
 
 class StaticGeneratorTest extends KernelTestCase
 {
@@ -151,36 +149,9 @@ class StaticGeneratorTest extends KernelTestCase
 
     public function getGeneratorBag(): GeneratorBag
     {
-        $generatorBag = new GeneratorBag();
-        $generators = [
-            'redirectionManager' => RedirectionManager::class,
-            'cNAMEGenerator' => CNAMEGenerator::class,
-            'copierGenerator' => CopierGenerator::class,
-            'errorPageGenerator' => ErrorPageGenerator::class,
-            'htaccessGenerator' => HtaccessGenerator::class,
-            'mediaGenerator' => MediaGenerator::class,
-            'pagesGenerator' => PagesGenerator::class,
-            'robotsGenerator' => RobotsGenerator::class,
-        ];
-
-        foreach ($generators as $name => $class) {
-            $generator = new $class(
-                $this->getPageRepo(),
-                static::getContainer()->get('test.service_container')->get('twig'),
-                $this->getParameterBag(),
-                new RequestStack(),
-                self::$kernel->getContainer()->get('translator'),
-                self::$kernel->getContainer()->get(\Pushword\Core\Router\PushwordRouteGenerator::class),
-                self::$kernel,// ->getContainer()->get('kernel'),
-                self::$kernel->getContainer()->get(\Pushword\Core\Component\App\AppPool::class)
-            );
-
-            if (property_exists($generator, 'redirectionManager')) {
-                $generator->redirectionManager = $generatorBag->get('redirectionManager');
-            }
-
-            $generatorBag->set($generator);
-        }
+        self::bootKernel();
+        $container = static::getContainer();
+        $generatorBag = $container->get(GeneratorBag::class);
 
         return $generatorBag;
     }
@@ -197,10 +168,6 @@ class StaticGeneratorTest extends KernelTestCase
 
     public static function getParams($name)
     {
-        if ('pw.entity_page' == $name) {
-            return \App\Entity\Page::class;
-        }
-
         if ('kernel.project_dir' == $name) {
             return __DIR__.'/../../skeleton';
         }

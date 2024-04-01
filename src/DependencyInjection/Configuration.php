@@ -76,7 +76,7 @@ class Configuration implements ConfigurationInterface
                 ->defaultValue('%kernel.project_dir%/%main_host%')
                 ->info('If null or empty, static dir will be %kernel.project_dir%/host.tld/.')
                 ->validate()
-                    ->ifTrue(static fn ($value): bool => ! Helper::isAbsolutePath($value))
+                    ->ifTrue(static fn (string $value): bool => ! Helper::isAbsolutePath($value))
                     ->thenInvalid('Invalid static dir path `%s`, it must be absolute (eg: /home/pushword/host.tld/)')
                 ->end()
             ->end()

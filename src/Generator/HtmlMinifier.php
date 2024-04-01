@@ -15,6 +15,10 @@ class HtmlMinifier
 
     public static function removeExtraWhiteSpace(string $html): string
     {
+        if (! str_starts_with($html, '<!DOCTYPE html>')) {
+            return $html;
+        }
+
         $crawler = new Crawler($html);
         $html = '<!DOCTYPE html>'.$crawler->outerHtml(); // remove useless whitespace in tag attributes (but not in attribute !)
 

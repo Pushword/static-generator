@@ -2,14 +2,14 @@
 
 namespace Pushword\StaticGenerator\Generator;
 
-use Pushword\Core\Entity\PageInterface;
+use Pushword\Core\Entity\Page;
 
 class RedirectionManager extends AbstractGenerator
 {
     /**
      * Used in .htaccess generation.
      *
-     * @var array<int, array<mixed>>
+     * @var array<int, array{0: string, 1: string, 2: int}>
      */
     protected $redirections = [];
 
@@ -21,7 +21,7 @@ class RedirectionManager extends AbstractGenerator
         $this->redirections[] = [$from, $to, $code];
     }
 
-    public function addPage(PageInterface $page): void
+    public function addPage(Page $page): void
     {
         $this->redirections[] = [
             $this->router->generate($page->getRealSlug()),
@@ -31,7 +31,7 @@ class RedirectionManager extends AbstractGenerator
     }
 
     /**
-     * @return array<int, array<mixed>>
+     * @return array<int, array{0: string, 1: string, 2: int}>
      */
     public function get(): array
     {
