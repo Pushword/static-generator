@@ -23,7 +23,7 @@ class PageGenerator extends AbstractGenerator
         parent::generate($host);
 
         if (self::class === static::class) {
-            throw new \Exception('no plan to call generate, maybe you want to call generatePage ?');
+            throw new Exception('no plan to call generate, maybe you want to call generatePage ?');
         }
     }
 
@@ -65,7 +65,7 @@ class PageGenerator extends AbstractGenerator
     protected function generateFeedFor(Page $page): void
     {
         $liveUri = $this->generateLivePathFor($page, 'pushword_page_feed');
-        $staticFile = preg_replace('/.html$/', '.xml', $this->generateFilePath($page)) ?? throw new \Exception();
+        $staticFile = preg_replace('/.html$/', '.xml', $this->generateFilePath($page)) ?? throw new Exception();
         if (\count($page->getChildrenPages()) < 1) {
             return;
         }
@@ -132,7 +132,7 @@ class PageGenerator extends AbstractGenerator
     private function extractPager(Page $page, string $content): void
     {
         preg_match('#<!-- pager:(\d+) -->#', $content, $match);
-        $pager = (int) ($match[1] ?? throw new \Exception('Pager not found'));
+        $pager = (int) ($match[1] ?? throw new Exception('Pager not found'));
         $this->saveAsStatic(rtrim($this->generateLivePathFor($page), '/').'/'.$pager, $this->generateFilePath($page, $pager), $page);
     }
 

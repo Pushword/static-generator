@@ -2,13 +2,14 @@
 
 namespace Pushword\StaticGenerator\Generator;
 
+use Exception;
 use Symfony\Component\DomCrawler\Crawler;
 
 class HtmlMinifier
 {
     public static function compress(string $html): string
     {
-        $html = preg_replace('/<!--(.*?)-->/s', '', $html) ?? throw new \Exception();
+        $html = preg_replace('/<!--(.*?)-->/s', '', $html) ?? throw new Exception();
 
         return self::removeExtraWhiteSpace($html);
     }
