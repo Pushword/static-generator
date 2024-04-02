@@ -9,11 +9,7 @@ class CopierGenerator extends AbstractGenerator
         parent::generate($host);
 
         $symlink = $this->mustSymlink();
-        $entries = $this->app->get('static_copy');
-
-        if (! \is_array($entries)) {
-            return;
-        }
+        $entries = $this->app->getStringList('static_copy');
 
         foreach ($entries as $entry) {
             if (! file_exists($this->publicDir.'/'.$entry)) {

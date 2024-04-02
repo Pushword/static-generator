@@ -13,8 +13,6 @@ class MediaGenerator extends AbstractGenerator
 
     /**
      * Copy or Symlink "not image" media to download folder.
-     *
-     * @psalm-suppress RedundantCast
      */
     protected function copyMediaToDownload(): void
     {
