@@ -6,16 +6,16 @@ use Pushword\Admin\Tests\AbstractAdminTestClass;
 
 class StaticGeneratorControllerTest extends AbstractAdminTestClass
 {
-    public function testController(): void
+    public function testController()
     {
         $client = $this->loginUser();
 
         $client->catchExceptions(false);
 
         $client->request('GET', '/admin/static');
-        self::assertResponseIsSuccessful();
+        $this->assertResponseIsSuccessful();
 
         $client->request('GET', '/admin/static/localhost.dev');
-        self::assertResponseIsSuccessful();
+        $this->assertResponseIsSuccessful();
     }
 }

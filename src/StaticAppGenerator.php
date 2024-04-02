@@ -2,12 +2,10 @@
 
 namespace Pushword\StaticGenerator;
 
-use LogicException;
 use Pushword\Core\Component\App\AppPool;
 use Pushword\StaticGenerator\Generator\GeneratorInterface;
 use Pushword\StaticGenerator\Generator\PagesGenerator;
 use Pushword\StaticGenerator\Generator\RedirectionManager;
-use RuntimeException;
 use Symfony\Component\Filesystem\Filesystem;
 
 /**
@@ -20,11 +18,8 @@ final class StaticAppGenerator
     /** @var array<string> */
     private array $errors = [];
 
-    public function __construct(
-        private readonly AppPool $apps,
-        private readonly GeneratorBag $generatorBag,
-        private readonly RedirectionManager $redirectionManager
-    ) {
+    public function __construct(private readonly AppPool $apps, private readonly GeneratorBag $generatorBag, private readonly RedirectionManager $redirectionManager)
+    {
     }
 
     /**
@@ -60,8 +55,8 @@ final class StaticAppGenerator
     }
 
     /**
-     * @throws RuntimeException
-     * @throws LogicException
+     * @throws \RuntimeException
+     * @throws \LogicException
      *
      * @psalm-suppress  UndefinedPropertyAssignment
      */
@@ -78,7 +73,7 @@ final class StaticAppGenerator
 
         foreach ($app->get('static_generators') as $generator) { // @phpstan-ignore-line
             if (! \is_string($generator)) {
-                throw new LogicException();
+                throw new \LogicException();
             }
 
             $this->getGenerator($generator)->generate();

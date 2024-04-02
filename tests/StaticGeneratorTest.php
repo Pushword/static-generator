@@ -2,9 +2,6 @@
 
 namespace Pushword\StaticGenerator;
 
-use DateTime;
-use Exception;
-use Pushword\Core\Component\App\AppPool;
 use Pushword\Core\Entity\Page;
 use Pushword\Core\Repository\PageRepository;
 use Pushword\StaticGenerator\Generator\CNAMEGenerator;
@@ -15,20 +12,19 @@ use Pushword\StaticGenerator\Generator\HtaccessGenerator;
 use Pushword\StaticGenerator\Generator\MediaGenerator;
 use Pushword\StaticGenerator\Generator\PagesGenerator;
 use Pushword\StaticGenerator\Generator\RedirectionManager;
-
-use function Safe\realpath;
-
+use Pushword\StaticGenerator\Generator\RobotsGenerator;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 use Symfony\Component\Filesystem\Filesystem;
+use Symfony\Component\HttpFoundation\RequestStack;
 
 class StaticGeneratorTest extends KernelTestCase
 {
     private ?StaticAppGenerator $staticAppGenerator = null;
 
-    public function testStaticCommand(): void
+    public function testStaticCommand()
     {
         $kernel = static::createKernel();
         $application = new Application($kernel);
@@ -36,22 +32,24 @@ class StaticGeneratorTest extends KernelTestCase
         $command = $application->find('pushword:static:generate');
         $commandTester = new CommandTester($command);
 
+        $this->assertTrue(true);
+
         $commandTester->execute(['localhost.dev']);
 
         // the output of the command in the console
         $output = $commandTester->getDisplay();
-        self::assertTrue(str_contains($output, 'success'));
+        $this->assertTrue(str_contains($output, 'success'));
 
-        self::assertFileExists(__DIR__.'/../../skeleton/localhost.dev/.htaccess');
-        self::assertFileExists(__DIR__.'/../../skeleton/localhost.dev/index.html');
-        self::assertFileExists(__DIR__.'/../../skeleton/localhost.dev/robots.txt');
+        $this->assertTrue(file_exists(__DIR__.'/../../skeleton/localhost.dev/.htaccess'));
+        $this->assertTrue(file_exists(__DIR__.'/../../skeleton/localhost.dev/index.html'));
+        $this->assertTrue(file_exists(__DIR__.'/../../skeleton/localhost.dev/robots.txt'));
 
         $staticDir = __DIR__.'/../../skeleton/localhost.dev';
         $filesystem = new Filesystem();
         $filesystem->remove($staticDir);
     }
 
-    private function getStaticAppGenerator(): StaticAppGenerator
+    private function getStaticAppGenerator()
     {
         if (null !== $this->staticAppGenerator) {
             return $this->staticAppGenerator;
@@ -60,19 +58,19 @@ class StaticGeneratorTest extends KernelTestCase
         $generatorBag = $this->getGeneratorBag();
 
         return new StaticAppGenerator(
-            self::getContainer()->get(AppPool::class),
+            self::$kernel->getContainer()->get(\Pushword\Core\Component\App\AppPool::class),
             $generatorBag,
-            $generatorBag->get(RedirectionManager::class) // @phpstan-ignore-line
+            $generatorBag->get(RedirectionManager::class)
         );
     }
 
-    public function testIt(): void
+    public function testIt()
     {
         self::bootKernel();
 
         $this->getStaticAppGenerator()->generate('localhost.dev');
 
-        self::assertFileExists(__DIR__.'/../../skeleton/localhost.dev');
+        $this->assertTrue(file_exists(__DIR__.'/../../skeleton/localhost.dev'));
 
         $staticDir = __DIR__.'/../../skeleton/localhost.dev';
         $filesystem = new Filesystem();
@@ -85,7 +83,7 @@ class StaticGeneratorTest extends KernelTestCase
         return $this->getGeneratorBag()->get($name)->setStaticAppGenerator($this->getStaticAppGenerator());
     }
 
-    public function testGenerateHtaccess(): void
+    public function testGenerateHtaccess()
     {
         self::bootKernel();
 
@@ -93,10 +91,10 @@ class StaticGeneratorTest extends KernelTestCase
 
         $generator->generate('localhost.dev');
 
-        self::assertFileExists(__DIR__.'/../../skeleton/localhost.dev/.htaccess');
+        $this->assertTrue(file_exists(__DIR__.'/../../skeleton/localhost.dev/.htaccess'));
     }
 
-    public function testGenerateCNAME(): void
+    public function testGenerateCNAME()
     {
         self::bootKernel();
 
@@ -104,10 +102,10 @@ class StaticGeneratorTest extends KernelTestCase
 
         $generator->generate('localhost.dev');
 
-        self::assertFileExists(__DIR__.'/../../skeleton/localhost.dev/CNAME');
+        $this->assertTrue(file_exists(__DIR__.'/../../skeleton/localhost.dev/CNAME'));
     }
 
-    public function testCopier(): void
+    public function testCopier()
     {
         self::bootKernel();
 
@@ -115,10 +113,10 @@ class StaticGeneratorTest extends KernelTestCase
 
         $generator->generate('localhost.dev');
 
-        self::assertFileExists(__DIR__.'/../../skeleton/localhost.dev/assets');
+        $this->assertTrue(file_exists(__DIR__.'/../../skeleton/localhost.dev/assets'));
     }
 
-    public function testError(): void
+    public function testError()
     {
         self::bootKernel();
 
@@ -126,10 +124,10 @@ class StaticGeneratorTest extends KernelTestCase
 
         $generator->generate('localhost.dev');
 
-        self::assertFileExists(__DIR__.'/../../skeleton/localhost.dev/404.html');
+        $this->assertFileExists(__DIR__.'/../../skeleton/localhost.dev/404.html');
     }
 
-    public function testDownload(): void
+    public function testDownload()
     {
         self::bootKernel();
 
@@ -137,10 +135,10 @@ class StaticGeneratorTest extends KernelTestCase
 
         $generator->generate('localhost.dev');
 
-        self::assertFileExists(__DIR__.'/../../skeleton/localhost.dev/media');
+        $this->assertFileExists(__DIR__.'/../../skeleton/localhost.dev/media');
     }
 
-    public function testPages(): void
+    public function testPages()
     {
         self::bootKernel();
 
@@ -148,55 +146,85 @@ class StaticGeneratorTest extends KernelTestCase
 
         $generator->generate('localhost.dev');
 
-        self::assertFileExists(__DIR__.'/../../skeleton/localhost.dev/index.html');
+        $this->assertFileExists(__DIR__.'/../../skeleton/localhost.dev/index.html');
     }
 
     public function getGeneratorBag(): GeneratorBag
     {
-        self::bootKernel();
-        $container = static::getContainer();
+        $generatorBag = new GeneratorBag();
+        $generators = [
+            'redirectionManager' => RedirectionManager::class,
+            'cNAMEGenerator' => CNAMEGenerator::class,
+            'copierGenerator' => CopierGenerator::class,
+            'errorPageGenerator' => ErrorPageGenerator::class,
+            'htaccessGenerator' => HtaccessGenerator::class,
+            'mediaGenerator' => MediaGenerator::class,
+            'pagesGenerator' => PagesGenerator::class,
+            'robotsGenerator' => RobotsGenerator::class,
+        ];
 
-        return $container->get(GeneratorBag::class);
+        foreach ($generators as $name => $class) {
+            $generator = new $class(
+                $this->getPageRepo(),
+                static::getContainer()->get('test.service_container')->get('twig'),
+                $this->getParameterBag(),
+                new RequestStack(),
+                self::$kernel->getContainer()->get('translator'),
+                self::$kernel->getContainer()->get(\Pushword\Core\Router\PushwordRouteGenerator::class),
+                self::$kernel,// ->getContainer()->get('kernel'),
+                self::$kernel->getContainer()->get(\Pushword\Core\Component\App\AppPool::class)
+            );
+
+            if (property_exists($generator, 'redirectionManager')) {
+                $generator->redirectionManager = $generatorBag->get('redirectionManager');
+            }
+
+            $generatorBag->set($generator);
+        }
+
+        return $generatorBag;
     }
 
-    public function getParameterBag(): ParameterBagInterface
+    public function getParameterBag()
     {
         $params = $this->createMock(ParameterBagInterface::class);
 
         $params->method('get')
-             ->willReturnCallback(self::getParams(...));
+             ->willReturnCallback([$this, 'getParams']);
 
         return $params;
     }
 
-    public static function getParams(string $name): string
+    public static function getParams($name)
     {
-        if ('kernel.project_dir' === $name) {
+        if ('pw.entity_page' == $name) {
+            return \App\Entity\Page::class;
+        }
+
+        if ('kernel.project_dir' == $name) {
             return __DIR__.'/../../skeleton';
         }
 
-        if ('pw.public_media_dir' === $name) {
+        if ('pw.public_media_dir' == $name) {
             return 'media';
         }
 
-        if ('pw.media_dir' === $name) {
+        if ('pw.media_dir' == $name) {
             return realpath(__DIR__.'/../../skeleton/media');
         }
 
-        if ('pw.public_dir' === $name) {
+        if ('pw.public_dir' == $name) {
             return realpath(__DIR__.'/../../skeleton/public');
         }
-
-        throw new Exception();
     }
 
-    public function getPageRepo(): PageRepository
+    public function getPageRepo()
     {
         $page = (new Page())
             ->setH1('Welcome : this is your first page')
             ->setSlug('homepage')
             ->setLocale('en')
-            ->setCreatedAt(new DateTime('2 days ago'))
+            ->setCreatedAt(new \DateTime('2 days ago'))
             ->setMainContent('...');
 
         $pageRepo = $this->createMock(PageRepository::class);

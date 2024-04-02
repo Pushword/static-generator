@@ -28,10 +28,10 @@ abstract class AbstractGenerator implements GeneratorInterface
 
     protected string $publicDir;
 
-    /** @psalm-suppress PropertyNotSetInConstructor  */
     protected AppConfig $app;
 
-    /** @psalm-suppress PropertyNotSetInConstructor */
+    protected string $staticDir;
+
     protected StaticAppGenerator $staticAppGenerator;
 
     public function __construct(
@@ -71,7 +71,7 @@ abstract class AbstractGenerator implements GeneratorInterface
     protected function mustSymlink(): bool
     {
         return \is_array($this->app->get('static_generators'))
-            && \in_array(CNAMEGenerator::class, $this->app->getArray('static_generators'), true) ? false
+            && \in_array(CNAMEGenerator::class, $this->app->get('static_generators'), true) ? false
             : (bool) $this->app->get('static_symlink');
     }
 

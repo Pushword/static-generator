@@ -27,24 +27,22 @@ class StaticCommand extends Command
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $host = $input->getArgument('host');
-        if (null === $host) {
+        if (null === $input->getArgument('host')) {
             $this->staticAppGenerator->generate();
             $this->printStatus($output, 'All websites generated witch success.');
 
             return 0;
         }
 
-        $page = $input->getArgument('page');
-        if (null === $page) {
-            $this->staticAppGenerator->generate($host);
-            $this->printStatus($output, $host.' generated witch success.');
+        if (null === $input->getArgument('page')) {
+            $this->staticAppGenerator->generate($input->getArgument('host'));
+            $this->printStatus($output, $input->getArgument('host').' generated witch success.');
 
             return 0;
         }
 
-        $this->staticAppGenerator->generatePage($host,  $page);
-        $this->printStatus($output, $host."'s page generated witch success.");
+        $this->staticAppGenerator->generatePage($input->getArgument('host'),  $input->getArgument('page'));
+        $this->printStatus($output, $input->getArgument('host')."'s page generated witch success.");
 
         return 0;
     }
