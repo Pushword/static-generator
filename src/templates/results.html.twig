@@ -1,7 +1,7 @@
 {% extends '@SonataAdmin/standard_layout.html.twig' %}
 
 {% block sonata_admin_content %}
-    {% if  errors is empty  %}
+    {% if errors is empty %}
         <p class="alert alert-success">{{ 'admin.static.updated'|trans }}</p>
     {% else %}
         <div class="alert alert-warning">
