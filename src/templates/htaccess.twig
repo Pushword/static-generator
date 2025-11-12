@@ -66,20 +66,80 @@ ErrorDocument 404 /404
 ErrorDocument 500 /404
 
 #---
+# Forbid access to Caddyfile
+#---
+RewriteRule ^\.Caddyfile$ - [F]
+
+#---
+# Precompressed Files (Zstandard, Brotli & Gzip)
+#---
+<IfModule mod_rewrite.c>
+    # Check for Zstandard support (priority: zstd > brotli > gzip)
+    RewriteCond %{HTTP:Accept-Encoding} zstd
+    RewriteCond %{REQUEST_FILENAME}.zst -f
+    RewriteRule ^(.*)$ $1.zst [L]
+
+    # Check for Brotli support
+    RewriteCond %{HTTP:Accept-Encoding} br
+    RewriteCond %{REQUEST_FILENAME}.br -f
+    RewriteRule ^(.*)$ $1.br [L]
+
+    # Check for Gzip support
+    RewriteCond %{HTTP:Accept-Encoding} gzip
+    RewriteCond %{REQUEST_FILENAME}.gz -f
+    RewriteRule ^(.*)$ $1.gz [L]
+</IfModule>
+
+<IfModule mod_headers.c>
+    # Serve correct encoding and content type for precompressed files
+    <FilesMatch "\.zst$">
+        Header set Content-Encoding zstd
+        Header set Vary Accept-Encoding
+    </FilesMatch>
+
+    <FilesMatch "\.br$">
+        Header set Content-Encoding br
+        Header set Vary Accept-Encoding
+    </FilesMatch>
+
+    <FilesMatch "\.gz$">
+        Header set Content-Encoding gzip
+        Header set Vary Accept-Encoding
+    </FilesMatch>
+</IfModule>
+
+<IfModule mod_mime.c>
+    # Preserve MIME types for compressed files
+    RemoveType .gz .br .zst
+    AddEncoding zstd .zst
+    AddEncoding br .br
+    AddEncoding gzip .gz
+</IfModule>
+
+#---
+# Security Headers
+#---
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+    Header unset Server
+</IfModule>
+
+#---
 # Cache
 #---
 <IfModule mod_headers.c>
-Header set Connection keep-alive
-FileETag Size
-# 4 HOURS
-Header set Cache-Control "max-age=14400, must-revalidate"
-    # 480 weeks - 290304000
-    <filesMatch "\.(ico|pdf|flv|jpg|JPG|jpeg|png|gif|js|swf|css|eot|svg|ttf|woff|woff2|webp)$">
-        Header set Cache-Control "max-age=290304000, public"
+    Header set Connection keep-alive
+    FileETag Size
+
+    # HTML, TXT, XML and others: 1 hour
+    Header set Cache-Control "max-age=3600, public"
+
+    # Assets: 1 year
+    <filesMatch "\.(ico|pdf|flv|jpg|JPG|jpeg|png|gif|webp|avif|svg|eot|ttf|woff|woff2|js|css)$">
+        Header set Cache-Control "max-age=31536000, public"
     </filesMatch>
-    <FilesMatch "\.(gif|jpg|png|ico|css|js|pdf|txt|webp)$">
-        Header append Cache-Control "public"
-    </FilesMatch>
 </IfModule>
 
 # ---

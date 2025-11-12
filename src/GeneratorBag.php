@@ -2,12 +2,14 @@
 
 namespace Pushword\StaticGenerator;
 
+use Pushword\StaticGenerator\Generator\CaddyfileGenerator;
 use Pushword\StaticGenerator\Generator\CNAMEGenerator;
 use Pushword\StaticGenerator\Generator\CopierGenerator;
 use Pushword\StaticGenerator\Generator\ErrorPageGenerator;
 use Pushword\StaticGenerator\Generator\GeneratorInterface;
 use Pushword\StaticGenerator\Generator\HtaccessGenerator;
 use Pushword\StaticGenerator\Generator\MediaGenerator;
+use Pushword\StaticGenerator\Generator\PagesCompressor;
 use Pushword\StaticGenerator\Generator\PagesGenerator;
 use Pushword\StaticGenerator\Generator\RedirectionManager;
 use Pushword\StaticGenerator\Generator\RobotsGenerator;
@@ -22,10 +24,12 @@ class GeneratorBag
         private readonly CopierGenerator $copierGenerator,
         private readonly ErrorPageGenerator $errorPageGenerator,
         private readonly HtaccessGenerator $htaccessGenerator,
+        private readonly CaddyfileGenerator $caddyfileGenerator,
         private readonly MediaGenerator $mediaGenerator,
         private readonly PagesGenerator $pagesGenerator,
         private readonly RobotsGenerator $robotsGenerator,
         private readonly RedirectionManager $redirectionManager,
+        private readonly PagesCompressor $pagesCompressor,
     ) {
     }
 

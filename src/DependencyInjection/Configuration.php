@@ -2,12 +2,14 @@
 
 namespace Pushword\StaticGenerator\DependencyInjection;
 
+use Pushword\StaticGenerator\Generator\CaddyfileGenerator;
 use Pushword\StaticGenerator\Generator\CNAMEGenerator;
 use Pushword\StaticGenerator\Generator\CopierGenerator;
 use Pushword\StaticGenerator\Generator\ErrorPageGenerator;
 use Pushword\StaticGenerator\Generator\GeneratorInterface;
 use Pushword\StaticGenerator\Generator\HtaccessGenerator;
 use Pushword\StaticGenerator\Generator\MediaGenerator;
+use Pushword\StaticGenerator\Generator\PagesCompressor;
 use Pushword\StaticGenerator\Generator\PagesGenerator;
 use Pushword\StaticGenerator\Generator\RobotsGenerator;
 use Pushword\StaticGenerator\Helper;
@@ -24,6 +26,8 @@ class Configuration implements ConfigurationInterface
     ];
 
     /**
+     * The default generator covers Apache/Litespeed and FrankenPHP/Caddy.
+     *
      * @var array<class-string<GeneratorInterface>>
      */
     final public const array DEFAULT_GENERATOR = [
@@ -33,6 +37,21 @@ class Configuration implements ConfigurationInterface
         CopierGenerator::class,
         MediaGenerator::class,
         HtaccessGenerator::class,
+        CaddyfileGenerator::class,
+        PagesCompressor::class,
+    ];
+
+    /**
+     * @var array<class-string<GeneratorInterface>>
+     */
+    final public const array DEFAULT_GENERATOR_APACHE = [
+        PagesGenerator::class,
+        RobotsGenerator::class,
+        ErrorPageGenerator::class,
+        CopierGenerator::class,
+        MediaGenerator::class,
+        HtaccessGenerator::class,
+        PagesCompressor::class,
     ];
 
     /**
@@ -45,6 +64,19 @@ class Configuration implements ConfigurationInterface
         CopierGenerator::class,
         MediaGenerator::class,
         CNAMEGenerator::class,
+    ];
+
+    /**
+     * @var array<class-string<GeneratorInterface>>
+     */
+    final public const array DEFAULT_GENERATOR_FRANKENPHP = [
+        PagesGenerator::class,
+        RobotsGenerator::class,
+        ErrorPageGenerator::class,
+        CopierGenerator::class,
+        MediaGenerator::class,
+        CaddyfileGenerator::class,
+        PagesCompressor::class,
     ];
 
     /**
@@ -64,8 +96,9 @@ class Configuration implements ConfigurationInterface
             ->variableNode('static_generators')
                 ->defaultValue(self::DEFAULT_GENERATOR)
                 ->validate()
-                    ->ifInArray(['apache'])->then(static fn (): array => self::DEFAULT_GENERATOR)
+                    ->ifInArray(['apache'])->then(static fn (): array => self::DEFAULT_GENERATOR_APACHE)
                     ->ifInArray(['github'])->then(static fn (): array => self::DEFAULT_GENERATOR_GITHUB)
+                    ->ifInArray(['frankenphp'])->then(static fn (): array => self::DEFAULT_GENERATOR_FRANKENPHP)
                 ->end()
             ->end()
 
