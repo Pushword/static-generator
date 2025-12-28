@@ -32,15 +32,46 @@ class PagesGenerator extends PageGenerator implements IncrementalGeneratorInterf
         // Track current slugs for cleanup
         $currentSlugs = [];
 
+        $totalPages = \count($pages);
+        $currentPage = 0;
+
         foreach ($pages as $page) {
+            ++$currentPage;
             $currentSlugs[] = $page->getSlug();
 
             // In incremental mode, skip pages that haven't changed
             if ($this->incremental && ! $this->needsRegeneration($page, $hostName)) {
+                $this->staticAppGenerator->writeln(\sprintf(
+                    '[%d/%d] <comment>Skipped</comment> %s/%s (unchanged)',
+                    $currentPage,
+                    $totalPages,
+                    $hostName,
+                    $page->getSlug() ?: 'index',
+                ));
+
                 continue;
             }
 
+            $slug = $page->getSlug() ?: 'index';
+            $this->staticAppGenerator->writeln(\sprintf(
+                '[%d/%d] Generating %s/%s',
+                $currentPage,
+                $totalPages,
+                $hostName,
+                $slug,
+            ));
+
+            $stopwatch = $this->staticAppGenerator->getStopwatch();
+            $stopwatch?->start('generatePage'); // 'page:'.$slug
             $this->generatePage($page);
+            $event = $stopwatch?->stop('generatePage'); // 'page:'.$slug
+
+            if (null !== $event && $event->getDuration() > 500) {
+                $this->staticAppGenerator->writeln(\sprintf(
+                    '    <comment>⏱ %dms (slow)</comment>',
+                    $event->getDuration(),
+                ));
+            }
 
             // Update state for this page
             $stateManager->setPageState($hostName, $page->getSlug(), $this->toImmutable($page->updatedAt)); // @phpstan-ignore argument.type
