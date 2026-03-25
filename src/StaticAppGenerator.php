@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace Pushword\StaticGenerator;
 
 use LogicException;
@@ -126,15 +124,9 @@ final class StaticAppGenerator
             $app->staticDir = $originalStaticDir; // @phpstan-ignore-line
 
             if (! $this->abortGeneration) {
-                $backupDir = $originalStaticDir.'~~';
-                $filesystem->remove($backupDir);
-
-                if ($filesystem->exists($originalStaticDir)) {
-                    $filesystem->rename($originalStaticDir, $backupDir);
-                }
-
+                $filesystem->remove($originalStaticDir);
                 $filesystem->rename($tempDir, $originalStaticDir);
-                $filesystem->remove($backupDir);
+                $filesystem->remove($tempDir);
             }
         }
 

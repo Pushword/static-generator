@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace Pushword\StaticGenerator\Generator;
 
 use Override;
@@ -13,8 +11,8 @@ class CopierGenerator extends AbstractGenerator
     {
         parent::generate($host);
 
-        $symlink = $this->mustSymlinkAssets();
-        $entries = $this->app->getStringList('static_assets');
+        $symlink = $this->mustSymlink();
+        $entries = $this->app->getStringList('static_copy');
 
         $issetFavicon = false;
 
@@ -27,7 +25,7 @@ class CopierGenerator extends AbstractGenerator
         }
 
         // permits to add a favicons to the root dir without extra config if the favicons is in the assets folder
-        // else configure in static_assets
+        // else configure  in in static_copy
         if ($issetFavicon || $this->filesystem->exists($this->getStaticDir().'/favicon.ico')) {
             return;
         }

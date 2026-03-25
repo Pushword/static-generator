@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace Pushword\StaticGenerator\Generator;
 
 use Pushword\Core\Repository\PageRepository;
@@ -71,32 +69,12 @@ abstract class AbstractGenerator implements GeneratorInterface
     }
 
     /**
-     * @return bool|string[]
+     * Symlink doesn't work on github page, symlink only for apache if conf say OK to symlink.
      */
-    private function getSymlinkConfig(): bool|array
+    protected function mustSymlink(): bool
     {
-        if ($this->useGenerator(CNAMEGenerator::class)) {
-            return false;
-        }
-
-        /** @var bool|string[] $config */
-        $config = $this->app->get('static_symlink') ?? true;
-
-        return $config;
-    }
-
-    protected function mustSymlinkMedia(): bool
-    {
-        $config = $this->getSymlinkConfig();
-
-        return \is_array($config) ? \in_array('media', $config, true) : $config;
-    }
-
-    protected function mustSymlinkAssets(): bool
-    {
-        $config = $this->getSymlinkConfig();
-
-        return \is_array($config) ? \in_array('assets', $config, true) : $config;
+        return $this->useGenerator(CNAMEGenerator::class) ? false
+          : (bool) $this->app->get('static_symlink');
     }
 
     /**
