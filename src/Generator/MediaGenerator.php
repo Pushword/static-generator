@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Pushword\StaticGenerator\Generator;
 
 use FilesystemIterator;
@@ -85,7 +87,7 @@ class MediaGenerator extends AbstractGenerator implements IncrementalGeneratorIn
         $mediaDir = $this->params->get('pw.media_dir');
         $staticMediaDir = $this->getStaticDir().'/'.$publicMediaDir;
 
-        $symlink = $this->mustSymlink();
+        $symlink = $this->mustSymlinkMedia();
 
         // fix when media symlink exist and then, we want to copy
         if (is_link($staticMediaDir)) {

@@ -24,12 +24,10 @@ use Pushword\StaticGenerator\Generator\MediaGenerator;
 use Pushword\StaticGenerator\Generator\PageGenerator;
 use Pushword\StaticGenerator\Generator\PagesGenerator;
 use Pushword\StaticGenerator\Generator\RedirectionManager;
-use ReflectionMethod;
-use ReflectionProperty;
-use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpKernel\KernelInterface;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
+use ReflectionMethod;
+use ReflectionProperty;
 
 use function Safe\realpath;
 
@@ -39,6 +37,8 @@ use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 use Symfony\Component\Filesystem\Filesystem;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpKernel\KernelInterface;
 
 #[Group('integration')]
 class StaticGeneratorTest extends KernelTestCase
@@ -325,7 +325,7 @@ class StaticGeneratorTest extends KernelTestCase
 
         $debugKernel = self::createStub(KernelInterface::class);
         $debugKernel->method('handle')->willReturn(
-            new Response('<html><body><p>Twig error: variable not found</p></body></html>', 500),
+            new Response('<html><body><p>Twig error: variable not found</p></body></html>', Response::HTTP_INTERNAL_SERVER_ERROR),
         );
 
         $originalAppKernel = AbstractGenerator::$appKernel;
@@ -336,8 +336,8 @@ class StaticGeneratorTest extends KernelTestCase
         $debugKernelProp->setValue(null, $debugKernel);
 
         try {
-            (new ReflectionMethod(AbstractGenerator::class, 'init'))->invoke($generator, 'localhost.dev');
-            (new ReflectionMethod(PageGenerator::class, 'saveAsStatic'))
+            new ReflectionMethod(AbstractGenerator::class, 'init')->invoke($generator, 'localhost.dev');
+            new ReflectionMethod(PageGenerator::class, 'saveAsStatic')
                 ->invoke($generator, '/test-500', $this->getStaticDir().'/test-500.html', null);
         } finally {
             AbstractGenerator::$appKernel = $originalAppKernel;
@@ -390,6 +390,71 @@ class StaticGeneratorTest extends KernelTestCase
         }
     }
 
+    public function testSelectiveSymlinkMediaOnly(): void
+    {
+        self::bootKernel();
+        $this->overrideStaticDir();
+
+        $container = self::getContainer();
+        $siteRegistry = $container->get(SiteRegistry::class);
+        $siteConfig = $siteRegistry->switchSite('localhost.dev')->get();
+        $siteConfig->setCustomProperty('static_symlink', ['media']);
+
+        try {
+            // Media should be symlinked
+            $mediaGenerator = $this->getGenerator(MediaGenerator::class);
+            $mediaGenerator->generate('localhost.dev');
+
+            $mediaDir = $this->getStaticDir().'/media';
+            self::assertFileExists($mediaDir);
+            $this->assertMediaFilesAccessible($mediaDir);
+            $this->assertContainsSymlinks($mediaDir);
+            $this->assertSymlinksAreRelative($mediaDir);
+
+            // Assets should be copied (not symlinked)
+            $copierGenerator = $this->getGenerator(CopierGenerator::class);
+            $copierGenerator->generate('localhost.dev');
+
+            $assetsDir = $this->getStaticDir().'/assets';
+            self::assertFileExists($assetsDir);
+            self::assertFalse(is_link($assetsDir), 'Assets should be copied, not symlinked, when static_symlink is [media]');
+        } finally {
+            $siteConfig->setCustomProperty('static_symlink', false);
+        }
+    }
+
+    public function testSelectiveSymlinkAssetsOnly(): void
+    {
+        self::bootKernel();
+        $this->overrideStaticDir();
+
+        $container = self::getContainer();
+        $siteRegistry = $container->get(SiteRegistry::class);
+        $siteConfig = $siteRegistry->switchSite('localhost.dev')->get();
+        $siteConfig->setCustomProperty('static_symlink', ['assets']);
+
+        try {
+            // Media should be copied (not symlinked)
+            $mediaGenerator = $this->getGenerator(MediaGenerator::class);
+            $mediaGenerator->generate('localhost.dev');
+
+            $mediaDir = $this->getStaticDir().'/media';
+            self::assertFileExists($mediaDir);
+            $this->assertMediaFilesAccessible($mediaDir);
+            $this->assertContainsNoSymlinks($mediaDir);
+
+            // Assets should be symlinked
+            $copierGenerator = $this->getGenerator(CopierGenerator::class);
+            $copierGenerator->generate('localhost.dev');
+
+            $assetsDir = $this->getStaticDir().'/assets';
+            self::assertFileExists($assetsDir);
+            self::assertTrue(is_link($assetsDir), 'Assets should be symlinked when static_symlink is [assets]');
+        } finally {
+            $siteConfig->setCustomProperty('static_symlink', false);
+        }
+    }
+
     private function assertMediaFilesAccessible(string $dir): void
     {
         /** @var SplFileInfo $file */
@@ -398,6 +463,27 @@ class StaticGeneratorTest extends KernelTestCase
             if (is_link($path)) {
                 self::assertFileExists($path, \sprintf('Broken symlink: %s -> %s', $path, (string) readlink($path)));
             }
+        }
+    }
+
+    private function assertContainsSymlinks(string $dir): void
+    {
+        /** @var SplFileInfo $file */
+        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)) as $file) {
+            if (is_link($file->getPathname())) {
+                return;
+            }
+        }
+
+        self::fail('Expected at least one symlink in '.$dir);
+    }
+
+    private function assertContainsNoSymlinks(string $dir): void
+    {
+        /** @var SplFileInfo $file */
+        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)) as $file) {
+            $path = $file->getPathname();
+            self::assertFalse(is_link($path), \sprintf('Unexpected symlink: %s', $path));
         }
     }
 

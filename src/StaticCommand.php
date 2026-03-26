@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Pushword\StaticGenerator;
 
 use Pushword\Core\Service\BackgroundProcessManager;
@@ -92,7 +94,7 @@ final readonly class StaticCommand
 
             $event = $this->stopWatch->stop('generate');
             $duration = $event->getDuration();
-            $this->printStatus($teeOutput, $msg.' ('.$duration.'ms).');
+            $this->printStatus($teeOutput, $msg.' ('.$this->formatDuration($duration).').');
 
             // Print timing breakdown
             $this->printTimingBreakdown($teeOutput);
@@ -161,9 +163,26 @@ final readonly class StaticCommand
                 'file.write' => 'write',
                 default => 'page',
             };
-            $parts[] = \sprintf('%s: %dms', $shortName, $duration);
+            $parts[] = \sprintf('%s: %s', $shortName, $this->formatDuration($duration));
         }
 
         $output->writeln('<comment>⏱ '.implode(' | ', $parts).'</comment>');
+    }
+
+    private function formatDuration(float $ms): string
+    {
+        if ($ms < 1000) {
+            return \sprintf('%dms', $ms);
+        }
+
+        $seconds = $ms / 1000;
+        if ($seconds < 60) {
+            return \sprintf('%.1fs', $seconds);
+        }
+
+        $minutes = floor($seconds / 60);
+        $remaining = $seconds - ($minutes * 60);
+
+        return \sprintf('%dm%02.0fs', $minutes, $remaining);
     }
 }
