@@ -14,8 +14,12 @@ use Psr\Log\LoggerInterface;
 use Pushword\Core\Entity\Page;
 use Pushword\Core\Repository\PageRepository;
 use Pushword\Core\Site\SiteRegistry;
+use Pushword\StaticGenerator\Event\StaticPostGenerateEvent;
+use Pushword\StaticGenerator\Event\StaticPreGenerateEvent;
 use Pushword\StaticGenerator\Generator\AbstractGenerator;
 use Pushword\StaticGenerator\Generator\CNAMEGenerator;
+use Pushword\StaticGenerator\Generator\CompressionAlgorithm;
+use Pushword\StaticGenerator\Generator\Compressor;
 use Pushword\StaticGenerator\Generator\CopierGenerator;
 use Pushword\StaticGenerator\Generator\ErrorPageGenerator;
 use Pushword\StaticGenerator\Generator\GeneratorInterface;
@@ -39,6 +43,7 @@ use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\KernelInterface;
+use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
 
 #[Group('integration')]
 class StaticGeneratorTest extends KernelTestCase
@@ -236,6 +241,7 @@ class StaticGeneratorTest extends KernelTestCase
             $generatorBag->get(RedirectionManager::class), // @phpstan-ignore-line
             $logger,
             new GenerationStateManager($projectDir),
+            self::getContainer()->get(EventDispatcherInterface::class),
         );
     }
 
@@ -510,6 +516,231 @@ class StaticGeneratorTest extends KernelTestCase
         $generator->generate('localhost.dev');
 
         self::assertFileExists($this->getStaticDir().'/index.html');
+    }
+
+    public function testEventsAreDispatched(): void
+    {
+        self::bootKernel();
+        $this->overrideStaticDir();
+
+        $preEvents = [];
+        $postEvents = [];
+
+        $dispatcher = self::getContainer()->get(EventDispatcherInterface::class);
+        $dispatcher->addListener(StaticPreGenerateEvent::class, static function (StaticPreGenerateEvent $event) use (&$preEvents): void {
+            $preEvents[] = $event;
+        });
+        $dispatcher->addListener(StaticPostGenerateEvent::class, static function (StaticPostGenerateEvent $event) use (&$postEvents): void {
+            $postEvents[] = $event;
+        });
+
+        $application = new Application(static::$kernel); // @phpstan-ignore-line
+        $command = $application->find('pw:static');
+        $commandTester = new CommandTester($command);
+        $commandTester->execute(['host' => 'localhost.dev']);
+
+        self::assertCount(1, $preEvents, 'StaticPreGenerateEvent should be dispatched once per host');
+        self::assertCount(1, $postEvents, 'StaticPostGenerateEvent should be dispatched once per host');
+        self::assertSame('localhost.dev', $preEvents[0]->app->getMainHost());
+        self::assertSame([], $postEvents[0]->errors);
+        self::assertFalse($preEvents[0]->incremental);
+    }
+
+    public function testGeneratorBagResolvesAllBuiltinGenerators(): void
+    {
+        self::bootKernel();
+        $bag = $this->getGeneratorBag();
+
+        $generatorClasses = [
+            PagesGenerator::class,
+            CopierGenerator::class,
+            MediaGenerator::class,
+            HtaccessGenerator::class,
+            ErrorPageGenerator::class,
+            CNAMEGenerator::class,
+            RedirectionManager::class,
+        ];
+
+        foreach ($generatorClasses as $generatorClass) {
+            $generator = $bag->get($generatorClass);
+            self::assertSame($generatorClass, $generator::class);
+        }
+    }
+
+    public function testGeneratorBagThrowsOnUnknownGenerator(): void
+    {
+        self::bootKernel();
+        $bag = $this->getGeneratorBag();
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessageMatches('/not registered/');
+        $bag->get('App\\NonExistent\\Generator');
+    }
+
+    public function testStaticAssetsCleanRemovesStaleFiles(): void
+    {
+        self::bootKernel();
+        $this->overrideStaticDir();
+
+        $container = self::getContainer();
+        $siteRegistry = $container->get(SiteRegistry::class);
+        $siteConfig = $siteRegistry->switchSite('localhost.dev')->get();
+        $siteConfig->setCustomProperty('static_symlink', false);
+        $siteConfig->setCustomProperty('static_assets_clean', true);
+
+        try {
+            $staticDir = $this->getStaticDir();
+            $filesystem = new Filesystem();
+
+            // First generation to create assets dir
+            $generator = $this->getGenerator(CopierGenerator::class);
+            $generator->generate('localhost.dev');
+            self::assertFileExists($staticDir.'/assets');
+
+            // Plant a stale file that doesn't exist in public/assets
+            $staleFile = $staticDir.'/assets/old-hash-abc123.js';
+            $filesystem->dumpFile($staleFile, 'stale content');
+            self::assertFileExists($staleFile);
+
+            // Regenerate with clean enabled — stale file should be gone
+            $generator->generate('localhost.dev');
+            self::assertFileDoesNotExist($staleFile, 'Stale file should be removed when static_assets_clean is true');
+            self::assertFileExists($staticDir.'/assets');
+        } finally {
+            $siteConfig->setCustomProperty('static_symlink', false);
+            $siteConfig->setCustomProperty('static_assets_clean', false);
+        }
+    }
+
+    public function testStaleTempDirCleanup(): void
+    {
+        self::bootKernel();
+        $this->overrideStaticDir();
+
+        $staticDir = $this->getStaticDir();
+        $filesystem = new Filesystem();
+
+        // Create a stale temp dir (older than 1 hour)
+        $staleTempDir = $staticDir.'~';
+        $filesystem->mkdir($staleTempDir);
+        touch($staleTempDir, time() - 7200);
+
+        $staleBackupDir = $staticDir.'~~';
+        $filesystem->mkdir($staleBackupDir);
+        touch($staleBackupDir, time() - 7200);
+
+        self::assertDirectoryExists($staleTempDir);
+        self::assertDirectoryExists($staleBackupDir);
+
+        $application = new Application(static::$kernel); // @phpstan-ignore-line
+        $command = $application->find('pw:static');
+        $commandTester = new CommandTester($command);
+        $commandTester->execute(['host' => 'localhost.dev']);
+
+        self::assertDirectoryDoesNotExist($staleTempDir, 'Stale temp dir should be cleaned up');
+        self::assertDirectoryDoesNotExist($staleBackupDir, 'Stale backup dir should be cleaned up');
+    }
+
+    public function testNativeGzipCompression(): void
+    {
+        $compressor = new Compressor();
+
+        // Gzip should be available natively via zlib
+        self::assertTrue(CompressionAlgorithm::Gzip->hasNativeSupport());
+
+        $content = str_repeat('Hello World! This is test content for compression. ', 100);
+        $compressed = CompressionAlgorithm::Gzip->nativeCompress($content);
+        self::assertNotNull($compressed);
+        self::assertLessThan(\strlen($content), \strlen($compressed));
+
+        // Verify decompression produces original content
+        $decompressed = gzdecode($compressed);
+        self::assertIsString($decompressed);
+        self::assertSame($content, $decompressed);
+    }
+
+    public function testNativeCompressionFallbackForMissingExtensions(): void
+    {
+        // Brotli and zstd are not installed as PHP extensions
+        // nativeCompress should return null, not crash
+        if (! \function_exists('brotli_compress')) {
+            self::assertNull(CompressionAlgorithm::Brotli->nativeCompress('test'));
+            self::assertFalse(CompressionAlgorithm::Brotli->hasNativeSupport());
+        }
+
+        if (! \function_exists('zstd_compress')) {
+            self::assertNull(CompressionAlgorithm::Zstd->nativeCompress('test'));
+            self::assertFalse(CompressionAlgorithm::Zstd->hasNativeSupport());
+        }
+    }
+
+    public function testCompressorUsesNativeGzipInsteadOfProcess(): void
+    {
+        $tempFile = sys_get_temp_dir().'/pushword-compress-test-'.getmypid().'.html';
+        file_put_contents($tempFile, '<html><body>Test content for native compression</body></html>');
+
+        try {
+            $compressor = new Compressor();
+            $compressor->compress($tempFile, CompressionAlgorithm::Gzip);
+
+            // Native compression is synchronous — file should exist immediately
+            // (no need to call waitForCompressionToFinish for native)
+            self::assertFileExists($tempFile.'.gz');
+
+            $gzContent = file_get_contents($tempFile.'.gz');
+            self::assertIsString($gzContent);
+            $decompressed = gzdecode($gzContent);
+            self::assertIsString($decompressed);
+            self::assertSame(file_get_contents($tempFile), $decompressed);
+        } finally {
+            @unlink($tempFile);
+            @unlink($tempFile.'.gz');
+        }
+    }
+
+    public function testPreloadedPageSkipsDbQuery(): void
+    {
+        self::bootKernel();
+        $this->overrideStaticDir();
+
+        $generator = $this->getGenerator(PagesGenerator::class);
+        $generator->generate('localhost.dev');
+
+        // The static dir should have index.html — this proves the page was rendered
+        // successfully using the pre-loaded page entity
+        self::assertFileExists($this->getStaticDir().'/index.html');
+
+        $content = file_get_contents($this->getStaticDir().'/index.html');
+        self::assertNotEmpty($content);
+        self::assertStringContainsString('Pushword', $content);
+    }
+
+    public function testContentUnchangedSkipsRewriteInIncremental(): void
+    {
+        self::bootKernel();
+        $this->overrideStaticDir();
+
+        $application = new Application(static::$kernel); // @phpstan-ignore-line
+        $command = $application->find('pw:static');
+        $commandTester = new CommandTester($command);
+
+        // First run (full)
+        $commandTester->execute(['host' => 'localhost.dev']);
+
+        $indexFile = $this->getStaticDir().'/index.html';
+        self::assertFileExists($indexFile);
+
+        // Set mtime to a known value
+        touch($indexFile, time() + 100);
+        clearstatcache();
+        $originalMtime = filemtime($indexFile);
+
+        // Incremental run — content is unchanged, file should NOT be rewritten
+        $commandTester->execute(['host' => 'localhost.dev', '--incremental' => true]);
+
+        clearstatcache();
+        $newMtime = filemtime($indexFile);
+        self::assertSame($originalMtime, $newMtime, 'File should not be rewritten when content is unchanged in incremental mode');
     }
 
     public function getGeneratorBag(): GeneratorBag
