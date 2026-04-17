@@ -51,6 +51,10 @@ class Compressor
 
     private function isAlgorithmInstalled(CompressionAlgorithm $algorithm): bool
     {
+        if ($algorithm->hasNativeSupport()) {
+            return true;
+        }
+
         $process = new Process(['which', $algorithm->value]);
         $process->run();
 
@@ -68,11 +72,22 @@ class Compressor
             return;
         }
 
+        // Try native PHP compression first (no process spawn)
+        $content = $algorithm->hasNativeSupport() ? file_get_contents($filePath) : false;
+        if (false !== $content) {
+            $compressed = $algorithm->nativeCompress($content);
+            if (null !== $compressed) {
+                file_put_contents($filePath.$algorithm->getExtension(), $compressed);
+
+                return;
+            }
+        }
+
         $this->throttleIfNeeded();
 
         try {
             $cmd = match ($algorithm) {
-                CompressionAlgorithm::Zstd => 'zstd -f --stdout '.escapeshellarg($filePath).' > '.escapeshellarg($filePath.'.zst'),
+                CompressionAlgorithm::Zstd => 'zstd -f --zstd=wlog=23 --stdout '.escapeshellarg($filePath).' > '.escapeshellarg($filePath.'.zst'),
                 CompressionAlgorithm::Brotli => 'brotli --stdout '.escapeshellarg($filePath).' > '.escapeshellarg($filePath.'.br'),
                 CompressionAlgorithm::Gzip => 'gzip -c '.escapeshellarg($filePath).' > '.escapeshellarg($filePath.'.gz'),
             };

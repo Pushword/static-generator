@@ -13,6 +13,7 @@ use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\DependencyInjection\Attribute\AutoconfigureTag;
 use Symfony\Component\Stopwatch\Stopwatch;
+use Throwable;
 
 #[AsCommand(name: 'pw:static', description: 'Generate static version for your website')]
 #[AutoconfigureTag('console.command')]
@@ -38,9 +39,13 @@ final readonly class StaticCommand
         ?string $page,
         #[Option(description: 'Only regenerate pages that have changed since last generation', name: 'incremental', shortcut: 'i')]
         bool $incremental = false,
+        #[Option(description: 'Number of parallel workers (0=auto, 1=sequential)', name: 'workers', shortcut: 'w')]
+        int $workers = 0,
     ): int {
+        $processType = null === $host ? self::PROCESS_TYPE : self::PROCESS_TYPE.'--'.$host;
+
         // Check if same process type is already running (via PID file)
-        $pidFile = $this->processManager->getPidFilePath(self::PROCESS_TYPE);
+        $pidFile = $this->processManager->getPidFilePath($processType);
         $this->processManager->cleanupStaleProcess($pidFile);
         $processInfo = $this->processManager->getProcessInfo($pidFile);
 
@@ -55,23 +60,24 @@ final readonly class StaticCommand
 
         // Only clear storage if not already initialized by web controller
         // (web controller sets status to 'running' before starting background process)
-        $currentStatus = $this->outputStorage->getStatus(self::PROCESS_TYPE);
+        $currentStatus = $this->outputStorage->getStatus($processType);
         if ('running' !== $currentStatus) {
-            $this->outputStorage->clear(self::PROCESS_TYPE);
-            $this->outputStorage->setStatus(self::PROCESS_TYPE, 'running');
+            $this->outputStorage->clear($processType);
+            $this->outputStorage->setStatus($processType, 'running');
         }
 
         // Create tee output to write to both console and shared storage
-        $sharedOutput = new SharedOutputInterface($this->outputStorage, self::PROCESS_TYPE);
+        $sharedOutput = new SharedOutputInterface($this->outputStorage, $processType);
         $teeOutput = new TeeOutput([$output, $sharedOutput]);
 
         try {
             $teeOutput->writeln('<comment>PID: '.getmypid().'</comment>');
             $this->stopWatch->start('generate');
 
-            // Set tee output and stopwatch for progress reporting
+            // Set tee output, stopwatch, and workers for progress reporting
             $this->staticAppGenerator->setOutput($teeOutput);
             $this->staticAppGenerator->setStopwatch($this->stopWatch);
+            $this->staticAppGenerator->setWorkers($workers);
 
             if (null === $host) {
                 $this->staticAppGenerator->generate(null, $incremental);
@@ -92,7 +98,7 @@ final readonly class StaticCommand
 
             $event = $this->stopWatch->stop('generate');
             $duration = $event->getDuration();
-            $this->printStatus($teeOutput, $msg.' ('.$duration.'ms).');
+            $this->printStatus($teeOutput, $msg.' ('.$this->formatDuration($duration).').');
 
             // Print timing breakdown
             $this->printTimingBreakdown($teeOutput);
@@ -100,9 +106,14 @@ final readonly class StaticCommand
             $teeOutput->writeln(\sprintf('<comment>:: peak memory: %.1f MB</comment>', memory_get_peak_usage(true) / 1024 / 1024));
 
             $status = [] !== $this->staticAppGenerator->getErrors() ? 'error' : 'completed';
-            $this->outputStorage->setStatus(self::PROCESS_TYPE, $status);
+            $this->outputStorage->setStatus($processType, $status);
 
             return Command::SUCCESS;
+        } catch (Throwable $throwable) {
+            $teeOutput->writeln('<error>Fatal: '.$throwable->getMessage().'</error>');
+            $this->outputStorage->setStatus($processType, 'error');
+
+            return Command::FAILURE;
         } finally {
             // Clean up PID file
             $this->processManager->unregisterProcess($pidFile);
@@ -161,9 +172,26 @@ final readonly class StaticCommand
                 'file.write' => 'write',
                 default => 'page',
             };
-            $parts[] = \sprintf('%s: %dms', $shortName, $duration);
+            $parts[] = \sprintf('%s: %s', $shortName, $this->formatDuration($duration));
         }
 
         $output->writeln('<comment>⏱ '.implode(' | ', $parts).'</comment>');
+    }
+
+    private function formatDuration(float $ms): string
+    {
+        if ($ms < 1000) {
+            return \sprintf('%dms', $ms);
+        }
+
+        $seconds = $ms / 1000;
+        if ($seconds < 60) {
+            return \sprintf('%.1fs', $seconds);
+        }
+
+        $minutes = floor($seconds / 60);
+        $remaining = $seconds - ($minutes * 60);
+
+        return \sprintf('%dm%02.0fs', $minutes, $remaining);
     }
 }
