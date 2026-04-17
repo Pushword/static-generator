@@ -14,13 +14,8 @@ use Psr\Log\LoggerInterface;
 use Pushword\Core\Entity\Page;
 use Pushword\Core\Repository\PageRepository;
 use Pushword\Core\Site\SiteRegistry;
-use Pushword\StaticGenerator\Event\StaticPostGenerateEvent;
-use Pushword\StaticGenerator\Event\StaticPreGenerateEvent;
 use Pushword\StaticGenerator\Generator\AbstractGenerator;
-use Pushword\StaticGenerator\Generator\CaddyfileGenerator;
 use Pushword\StaticGenerator\Generator\CNAMEGenerator;
-use Pushword\StaticGenerator\Generator\CompressionAlgorithm;
-use Pushword\StaticGenerator\Generator\Compressor;
 use Pushword\StaticGenerator\Generator\CopierGenerator;
 use Pushword\StaticGenerator\Generator\ErrorPageGenerator;
 use Pushword\StaticGenerator\Generator\GeneratorInterface;
@@ -29,10 +24,12 @@ use Pushword\StaticGenerator\Generator\MediaGenerator;
 use Pushword\StaticGenerator\Generator\PageGenerator;
 use Pushword\StaticGenerator\Generator\PagesGenerator;
 use Pushword\StaticGenerator\Generator\RedirectionManager;
-use RecursiveDirectoryIterator;
-use RecursiveIteratorIterator;
 use ReflectionMethod;
 use ReflectionProperty;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpKernel\KernelInterface;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
 
 use function Safe\realpath;
 
@@ -42,9 +39,6 @@ use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 use Symfony\Component\Filesystem\Filesystem;
-use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpKernel\KernelInterface;
-use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
 
 #[Group('integration')]
 class StaticGeneratorTest extends KernelTestCase
@@ -94,11 +88,9 @@ class StaticGeneratorTest extends KernelTestCase
         $siteConfig = $siteRegistry->switchSite('localhost.dev')->get();
         $siteConfig->setCustomProperty('static_dir', $this->isolatedStaticDir);
 
-        // Clean up any leftover PID files in the per-worker var dir
-        $varDir = (string) getenv('PUSHWORD_TEST_VAR_DIR');
-        if ('' !== $varDir) {
-            new Filesystem()->remove(glob($varDir.'/static-generator*.pid') ?: []);
-        }
+        // Clean up shared PID file to prevent cross-worker interference
+        $pidFile = self::getContainer()->getParameter('kernel.project_dir').'/var/static-generator.pid';
+        new Filesystem()->remove($pidFile);
     }
 
     private function getStaticDir(): string
@@ -244,9 +236,6 @@ class StaticGeneratorTest extends KernelTestCase
             $generatorBag->get(RedirectionManager::class), // @phpstan-ignore-line
             $logger,
             new GenerationStateManager($projectDir),
-            self::getContainer()->get(EventDispatcherInterface::class),
-            self::getContainer()->get(PageRepository::class),
-            $projectDir,
         );
     }
 
@@ -275,25 +264,7 @@ class StaticGeneratorTest extends KernelTestCase
 
         $generator->generate('localhost.dev');
 
-        $htaccess = (string) file_get_contents($this->getStaticDir().'/.htaccess');
         self::assertFileExists($this->getStaticDir().'/.htaccess');
-        self::assertStringContainsString('max-age=10800', $htaccess);
-        self::assertStringContainsString('stale-while-revalidate=3600', $htaccess);
-    }
-
-    public function testGenerateCaddyfile(): void
-    {
-        self::bootKernel();
-        $this->overrideStaticDir();
-
-        $generator = $this->getGenerator(CaddyfileGenerator::class);
-
-        $generator->generate('localhost.dev');
-
-        $caddyfile = (string) file_get_contents($this->getStaticDir().'/.Caddyfile');
-        self::assertFileExists($this->getStaticDir().'/.Caddyfile');
-        self::assertStringContainsString('max-age=10800', $caddyfile);
-        self::assertStringContainsString('stale-while-revalidate=3600', $caddyfile);
     }
 
     public function testGenerateCNAME(): void
@@ -354,7 +325,7 @@ class StaticGeneratorTest extends KernelTestCase
 
         $debugKernel = self::createStub(KernelInterface::class);
         $debugKernel->method('handle')->willReturn(
-            new Response('<html><body><p>Twig error: variable not found</p></body></html>', Response::HTTP_INTERNAL_SERVER_ERROR),
+            new Response('<html><body><p>Twig error: variable not found</p></body></html>', 500),
         );
 
         $originalAppKernel = AbstractGenerator::$appKernel;
@@ -365,8 +336,8 @@ class StaticGeneratorTest extends KernelTestCase
         $debugKernelProp->setValue(null, $debugKernel);
 
         try {
-            new ReflectionMethod(AbstractGenerator::class, 'init')->invoke($generator, 'localhost.dev');
-            new ReflectionMethod(PageGenerator::class, 'saveAsStatic')
+            (new ReflectionMethod(AbstractGenerator::class, 'init'))->invoke($generator, 'localhost.dev');
+            (new ReflectionMethod(PageGenerator::class, 'saveAsStatic'))
                 ->invoke($generator, '/test-500', $this->getStaticDir().'/test-500.html', null);
         } finally {
             AbstractGenerator::$appKernel = $originalAppKernel;
@@ -419,71 +390,6 @@ class StaticGeneratorTest extends KernelTestCase
         }
     }
 
-    public function testSelectiveSymlinkMediaOnly(): void
-    {
-        self::bootKernel();
-        $this->overrideStaticDir();
-
-        $container = self::getContainer();
-        $siteRegistry = $container->get(SiteRegistry::class);
-        $siteConfig = $siteRegistry->switchSite('localhost.dev')->get();
-        $siteConfig->setCustomProperty('static_symlink', ['media']);
-
-        try {
-            // Media should be symlinked
-            $mediaGenerator = $this->getGenerator(MediaGenerator::class);
-            $mediaGenerator->generate('localhost.dev');
-
-            $mediaDir = $this->getStaticDir().'/media';
-            self::assertFileExists($mediaDir);
-            $this->assertMediaFilesAccessible($mediaDir);
-            $this->assertContainsSymlinks($mediaDir);
-            $this->assertSymlinksAreRelative($mediaDir);
-
-            // Assets should be copied (not symlinked)
-            $copierGenerator = $this->getGenerator(CopierGenerator::class);
-            $copierGenerator->generate('localhost.dev');
-
-            $assetsDir = $this->getStaticDir().'/assets';
-            self::assertFileExists($assetsDir);
-            self::assertFalse(is_link($assetsDir), 'Assets should be copied, not symlinked, when static_symlink is [media]');
-        } finally {
-            $siteConfig->setCustomProperty('static_symlink', false);
-        }
-    }
-
-    public function testSelectiveSymlinkAssetsOnly(): void
-    {
-        self::bootKernel();
-        $this->overrideStaticDir();
-
-        $container = self::getContainer();
-        $siteRegistry = $container->get(SiteRegistry::class);
-        $siteConfig = $siteRegistry->switchSite('localhost.dev')->get();
-        $siteConfig->setCustomProperty('static_symlink', ['assets']);
-
-        try {
-            // Media should be copied (not symlinked)
-            $mediaGenerator = $this->getGenerator(MediaGenerator::class);
-            $mediaGenerator->generate('localhost.dev');
-
-            $mediaDir = $this->getStaticDir().'/media';
-            self::assertFileExists($mediaDir);
-            $this->assertMediaFilesAccessible($mediaDir);
-            $this->assertContainsNoSymlinks($mediaDir);
-
-            // Assets should be symlinked
-            $copierGenerator = $this->getGenerator(CopierGenerator::class);
-            $copierGenerator->generate('localhost.dev');
-
-            $assetsDir = $this->getStaticDir().'/assets';
-            self::assertFileExists($assetsDir);
-            self::assertTrue(is_link($assetsDir), 'Assets should be symlinked when static_symlink is [assets]');
-        } finally {
-            $siteConfig->setCustomProperty('static_symlink', false);
-        }
-    }
-
     private function assertMediaFilesAccessible(string $dir): void
     {
         /** @var SplFileInfo $file */
@@ -492,27 +398,6 @@ class StaticGeneratorTest extends KernelTestCase
             if (is_link($path)) {
                 self::assertFileExists($path, \sprintf('Broken symlink: %s -> %s', $path, (string) readlink($path)));
             }
-        }
-    }
-
-    private function assertContainsSymlinks(string $dir): void
-    {
-        /** @var SplFileInfo $file */
-        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)) as $file) {
-            if (is_link($file->getPathname())) {
-                return;
-            }
-        }
-
-        self::fail('Expected at least one symlink in '.$dir);
-    }
-
-    private function assertContainsNoSymlinks(string $dir): void
-    {
-        /** @var SplFileInfo $file */
-        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)) as $file) {
-            $path = $file->getPathname();
-            self::assertFalse(is_link($path), \sprintf('Unexpected symlink: %s', $path));
         }
     }
 
@@ -539,402 +424,6 @@ class StaticGeneratorTest extends KernelTestCase
         $generator->generate('localhost.dev');
 
         self::assertFileExists($this->getStaticDir().'/index.html');
-    }
-
-    public function testEventsAreDispatched(): void
-    {
-        self::bootKernel();
-        $this->overrideStaticDir();
-
-        $preEvents = [];
-        $postEvents = [];
-
-        $dispatcher = self::getContainer()->get(EventDispatcherInterface::class);
-        $dispatcher->addListener(StaticPreGenerateEvent::class, static function (StaticPreGenerateEvent $event) use (&$preEvents): void {
-            $preEvents[] = $event;
-        });
-        $dispatcher->addListener(StaticPostGenerateEvent::class, static function (StaticPostGenerateEvent $event) use (&$postEvents): void {
-            $postEvents[] = $event;
-        });
-
-        $application = new Application(static::$kernel); // @phpstan-ignore-line
-        $command = $application->find('pw:static');
-        $commandTester = new CommandTester($command);
-        $commandTester->execute(['host' => 'localhost.dev']);
-
-        self::assertCount(1, $preEvents, 'StaticPreGenerateEvent should be dispatched once per host');
-        self::assertCount(1, $postEvents, 'StaticPostGenerateEvent should be dispatched once per host');
-        self::assertSame('localhost.dev', $preEvents[0]->app->getMainHost());
-        self::assertSame([], $postEvents[0]->errors);
-        self::assertFalse($preEvents[0]->incremental);
-    }
-
-    public function testGeneratorBagResolvesAllBuiltinGenerators(): void
-    {
-        self::bootKernel();
-        $bag = $this->getGeneratorBag();
-
-        $generatorClasses = [
-            PagesGenerator::class,
-            CopierGenerator::class,
-            MediaGenerator::class,
-            HtaccessGenerator::class,
-            ErrorPageGenerator::class,
-            CNAMEGenerator::class,
-            RedirectionManager::class,
-        ];
-
-        foreach ($generatorClasses as $generatorClass) {
-            $generator = $bag->get($generatorClass);
-            self::assertSame($generatorClass, $generator::class);
-        }
-    }
-
-    public function testGeneratorBagThrowsOnUnknownGenerator(): void
-    {
-        self::bootKernel();
-        $bag = $this->getGeneratorBag();
-
-        $this->expectException(LogicException::class);
-        $this->expectExceptionMessageMatches('/not registered/');
-        $bag->get('App\\NonExistent\\Generator');
-    }
-
-    public function testStaticAssetsCleanRemovesStaleFiles(): void
-    {
-        self::bootKernel();
-        $this->overrideStaticDir();
-
-        $container = self::getContainer();
-        $siteRegistry = $container->get(SiteRegistry::class);
-        $siteConfig = $siteRegistry->switchSite('localhost.dev')->get();
-        $siteConfig->setCustomProperty('static_symlink', false);
-        $siteConfig->setCustomProperty('static_assets_clean', true);
-
-        try {
-            $staticDir = $this->getStaticDir();
-            $filesystem = new Filesystem();
-
-            // First generation to create assets dir
-            $generator = $this->getGenerator(CopierGenerator::class);
-            $generator->generate('localhost.dev');
-            self::assertFileExists($staticDir.'/assets');
-
-            // Plant a stale file that doesn't exist in public/assets
-            $staleFile = $staticDir.'/assets/old-hash-abc123.js';
-            $filesystem->dumpFile($staleFile, 'stale content');
-            self::assertFileExists($staleFile);
-
-            // Regenerate with clean enabled — stale file should be gone
-            $generator->generate('localhost.dev');
-            self::assertFileDoesNotExist($staleFile, 'Stale file should be removed when static_assets_clean is true');
-            self::assertFileExists($staticDir.'/assets');
-        } finally {
-            $siteConfig->setCustomProperty('static_symlink', false);
-            $siteConfig->setCustomProperty('static_assets_clean', false);
-        }
-    }
-
-    public function testStaleTempDirCleanup(): void
-    {
-        self::bootKernel();
-        $this->overrideStaticDir();
-
-        $staticDir = $this->getStaticDir();
-        $filesystem = new Filesystem();
-
-        // Create a stale temp dir (older than 1 hour)
-        $staleTempDir = $staticDir.'~';
-        $filesystem->mkdir($staleTempDir);
-        touch($staleTempDir, time() - 7200);
-
-        $staleBackupDir = $staticDir.'~~';
-        $filesystem->mkdir($staleBackupDir);
-        touch($staleBackupDir, time() - 7200);
-
-        self::assertDirectoryExists($staleTempDir);
-        self::assertDirectoryExists($staleBackupDir);
-
-        $application = new Application(static::$kernel); // @phpstan-ignore-line
-        $command = $application->find('pw:static');
-        $commandTester = new CommandTester($command);
-        $commandTester->execute(['host' => 'localhost.dev']);
-
-        self::assertDirectoryDoesNotExist($staleTempDir, 'Stale temp dir should be cleaned up');
-        self::assertDirectoryDoesNotExist($staleBackupDir, 'Stale backup dir should be cleaned up');
-    }
-
-    public function testNativeGzipCompression(): void
-    {
-        $compressor = new Compressor();
-
-        // Gzip should be available natively via zlib
-        self::assertTrue(CompressionAlgorithm::Gzip->hasNativeSupport());
-
-        $content = str_repeat('Hello World! This is test content for compression. ', 100);
-        $compressed = CompressionAlgorithm::Gzip->nativeCompress($content);
-        self::assertNotNull($compressed);
-        self::assertLessThan(\strlen($content), \strlen($compressed));
-
-        // Verify decompression produces original content
-        $decompressed = gzdecode($compressed);
-        self::assertIsString($decompressed);
-        self::assertSame($content, $decompressed);
-    }
-
-    public function testNativeCompressionFallbackForMissingExtensions(): void
-    {
-        // Brotli and zstd are not installed as PHP extensions
-        // nativeCompress should return null, not crash
-        if (! \function_exists('brotli_compress')) {
-            self::assertNull(CompressionAlgorithm::Brotli->nativeCompress('test'));
-            self::assertFalse(CompressionAlgorithm::Brotli->hasNativeSupport());
-        }
-
-        if (! \function_exists('zstd_compress')) {
-            self::assertNull(CompressionAlgorithm::Zstd->nativeCompress('test'));
-            self::assertFalse(CompressionAlgorithm::Zstd->hasNativeSupport());
-        }
-    }
-
-    public function testCompressorUsesNativeGzipInsteadOfProcess(): void
-    {
-        $tempFile = sys_get_temp_dir().'/pushword-compress-test-'.getmypid().'.html';
-        file_put_contents($tempFile, '<html><body>Test content for native compression</body></html>');
-
-        try {
-            $compressor = new Compressor();
-            $compressor->compress($tempFile, CompressionAlgorithm::Gzip);
-
-            // Native compression is synchronous — file should exist immediately
-            // (no need to call waitForCompressionToFinish for native)
-            self::assertFileExists($tempFile.'.gz');
-
-            $gzContent = file_get_contents($tempFile.'.gz');
-            self::assertIsString($gzContent);
-            $decompressed = gzdecode($gzContent);
-            self::assertIsString($decompressed);
-            self::assertSame(file_get_contents($tempFile), $decompressed);
-        } finally {
-            @unlink($tempFile);
-            @unlink($tempFile.'.gz');
-        }
-    }
-
-    public function testPreloadedPageSkipsDbQuery(): void
-    {
-        self::bootKernel();
-        $this->overrideStaticDir();
-
-        $generator = $this->getGenerator(PagesGenerator::class);
-        $generator->generate('localhost.dev');
-
-        // The static dir should have index.html — this proves the page was rendered
-        // successfully using the pre-loaded page entity
-        self::assertFileExists($this->getStaticDir().'/index.html');
-
-        $content = file_get_contents($this->getStaticDir().'/index.html');
-        self::assertNotEmpty($content);
-        self::assertStringContainsString('Pushword', $content);
-    }
-
-    public function testContentUnchangedSkipsRewriteInIncremental(): void
-    {
-        self::bootKernel();
-        $this->overrideStaticDir();
-
-        $application = new Application(static::$kernel); // @phpstan-ignore-line
-        $command = $application->find('pw:static');
-        $commandTester = new CommandTester($command);
-
-        // First run (full)
-        $commandTester->execute(['host' => 'localhost.dev']);
-
-        $indexFile = $this->getStaticDir().'/index.html';
-        self::assertFileExists($indexFile);
-
-        // Set mtime to a known value
-        touch($indexFile, time() + 100);
-        clearstatcache();
-        $originalMtime = filemtime($indexFile);
-
-        // Incremental run — content is unchanged, file should NOT be rewritten
-        $commandTester->execute(['host' => 'localhost.dev', '--incremental' => true]);
-
-        clearstatcache();
-        $newMtime = filemtime($indexFile);
-        self::assertSame($originalMtime, $newMtime, 'File should not be rewritten when content is unchanged in incremental mode');
-    }
-
-    public function testWorkerCountResolverExplicitOverride(): void
-    {
-        self::assertSame(3, WorkerCountResolver::resolve(3, 100));
-        self::assertSame(5, WorkerCountResolver::resolve(10, 5)); // capped by page count
-    }
-
-    public function testWorkerCountResolverSmallPageCount(): void
-    {
-        self::assertSame(1, WorkerCountResolver::resolve(0, 5));
-        self::assertSame(1, WorkerCountResolver::resolve(0, 9));
-    }
-
-    public function testWorkerCountResolverAutoDetectsAboveThreshold(): void
-    {
-        $workers = WorkerCountResolver::resolve(0, 1000);
-        self::assertGreaterThan(1, $workers);
-    }
-
-    public function testParallelGenerationProducesSameOutput(): void
-    {
-        self::bootKernel();
-
-        $container = self::getContainer();
-        $siteRegistry = $container->get(SiteRegistry::class);
-
-        // Sequential run
-        $seqDir = sys_get_temp_dir().'/pushword-static-seq-'.getmypid();
-        $siteConfig = $siteRegistry->switchSite('localhost.dev')->get();
-        $siteConfig->setCustomProperty('static_dir', $seqDir);
-        $this->cleanupPidFiles();
-
-        $application = new Application(static::$kernel); // @phpstan-ignore-line
-        $command = $application->find('pw:static');
-        $tester = new CommandTester($command);
-        $tester->execute(['host' => 'localhost.dev', '--workers' => 1]);
-
-        $seqOutput = $tester->getDisplay();
-        self::assertStringContainsString('success', $seqOutput, 'Sequential generation failed: '.$seqOutput);
-
-        // Parallel run
-        $parDir = sys_get_temp_dir().'/pushword-static-par-'.getmypid();
-        $siteConfig->setCustomProperty('static_dir', $parDir);
-        $this->cleanupPidFiles();
-
-        $tester->execute(['host' => 'localhost.dev', '--workers' => 2]);
-        $parOutput = $tester->getDisplay();
-        self::assertStringContainsString('success', $parOutput, 'Parallel generation failed: '.$parOutput);
-
-        // Compare HTML file list (same pages generated)
-        $seqFiles = $this->getHtmlFiles($seqDir);
-        $parFiles = $this->getHtmlFiles($parDir);
-
-        self::assertSame(array_keys($seqFiles), array_keys($parFiles), 'Parallel should produce same files as sequential');
-
-        // Verify all parallel files have non-empty content
-        foreach ($parFiles as $relativePath => $content) {
-            self::assertNotEmpty($content, 'Empty content for '.$relativePath);
-        }
-
-        new Filesystem()->remove([$seqDir, $parDir]);
-    }
-
-    public function testParallelGenerationShowsWorkerPrefix(): void
-    {
-        self::bootKernel();
-        $this->overrideStaticDir();
-        $this->cleanupPidFiles();
-
-        $application = new Application(static::$kernel); // @phpstan-ignore-line
-        $command = $application->find('pw:static');
-        $tester = new CommandTester($command);
-        $tester->execute(['host' => 'localhost.dev', '--workers' => 2]);
-
-        $output = $tester->getDisplay();
-        self::assertStringContainsString('[W0]', $output);
-        self::assertStringContainsString('workers', $output);
-        self::assertStringContainsString('success', $output);
-    }
-
-    public function testStateMergeFromFile(): void
-    {
-        $tempDir = sys_get_temp_dir().'/pushword-state-merge-'.getmypid();
-        new Filesystem()->mkdir($tempDir.'/var');
-
-        try {
-            $stateManager = new GenerationStateManager($tempDir);
-            $stateManager->setLastGenerationTime('test.host');
-
-            // Create a worker state file
-            $workerFile = $tempDir.'/var/.worker-0.json';
-            file_put_contents($workerFile, json_encode([
-                'test.host' => [
-                    'pages' => [
-                        'page-a' => ['generatedAt' => '2025-01-01T00:00:00+00:00', 'pageUpdatedAt' => '2025-01-01T00:00:00+00:00'],
-                        'page-b' => ['generatedAt' => '2025-01-01T00:00:00+00:00', 'pageUpdatedAt' => '2025-01-01T00:00:00+00:00'],
-                    ],
-                ],
-            ]));
-
-            $stateManager->mergeFromFile($workerFile);
-
-            self::assertFalse($stateManager->needsRegeneration('test.host', 'page-a', new DateTimeImmutable('2025-01-01T00:00:00+00:00')));
-            self::assertFalse($stateManager->needsRegeneration('test.host', 'page-b', new DateTimeImmutable('2025-01-01T00:00:00+00:00')));
-            self::assertFileDoesNotExist($workerFile, 'Worker file should be cleaned up after merge');
-        } finally {
-            new Filesystem()->remove($tempDir);
-        }
-    }
-
-    public function testRedirectionExportImport(): void
-    {
-        self::bootKernel();
-
-        /** @var RedirectionManager $manager */
-        $manager = $this->getGeneratorBag()->get(RedirectionManager::class);
-        $manager->reset();
-        $manager->add('/old', '/new', 301);
-        $manager->add('/legacy', '/modern', 302);
-
-        $tempFile = sys_get_temp_dir().'/pushword-redir-'.getmypid().'.json';
-
-        try {
-            $manager->exportToFile($tempFile);
-            self::assertFileExists($tempFile);
-
-            // Reset and import
-            $manager->reset();
-            self::assertSame([], $manager->get());
-
-            $manager->importFromFile($tempFile);
-            self::assertCount(2, $manager->get());
-            self::assertSame('/old', $manager->get()[0][0]);
-            self::assertSame('/new', $manager->get()[0][1]);
-            self::assertFileDoesNotExist($tempFile, 'Import should clean up the file');
-        } finally {
-            @unlink($tempFile);
-        }
-    }
-
-    private function cleanupPidFiles(): void
-    {
-        $projectDir = self::getContainer()->getParameter('kernel.project_dir');
-        $filesystem = new Filesystem();
-        foreach (glob($projectDir.'/var/static-generator*.pid') ?: [] as $pid) {
-            $filesystem->remove($pid);
-        }
-    }
-
-    /**
-     * @return array<string, string> relativePath => content
-     */
-    private function getHtmlFiles(string $dir): array
-    {
-        $files = [];
-        $prefixLen = \strlen($dir) + 1;
-
-        /** @var SplFileInfo $file */
-        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)) as $file) {
-            if ('html' !== $file->getExtension()) {
-                continue;
-            }
-
-            $relativePath = substr($file->getPathname(), $prefixLen);
-            $files[$relativePath] = (string) file_get_contents($file->getPathname());
-        }
-
-        ksort($files);
-
-        return $files;
     }
 
     public function getGeneratorBag(): GeneratorBag

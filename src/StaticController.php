@@ -8,10 +8,8 @@ use Exception;
 use Pushword\Core\BackgroundTask\BackgroundTaskDispatcherInterface;
 use Pushword\Core\Service\BackgroundProcessManager;
 use Pushword\Core\Service\ProcessOutputStorage;
-use Pushword\Core\Site\SiteRegistry;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\DependencyInjection\Attribute\AutoconfigureTag;
-use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Security\Http\Attribute\IsGranted;
 use Symfony\Contracts\Service\Attribute\Required;
@@ -27,7 +25,6 @@ class StaticController extends AbstractController
         private readonly BackgroundTaskDispatcherInterface $backgroundTaskDispatcher,
         private readonly BackgroundProcessManager $processManager,
         private readonly ProcessOutputStorage $outputStorage,
-        private readonly SiteRegistry $siteRegistry,
     ) {
     }
 
@@ -47,22 +44,12 @@ class StaticController extends AbstractController
     #[IsGranted('ROLE_PUSHWORD_ADMIN')]
     public function generateStatic(?string $host = null): Response
     {
+        // Validate host parameter if provided
         if (null !== $host && ! $this->isValidHost($host)) {
             throw $this->createNotFoundException('Invalid host parameter');
         }
 
-        $blocking = $this->findBlockingProcess($host);
-        if (null !== $blocking) {
-            return $this->renderAdmin('@PushwordStatic/running.html.twig', [
-                'host' => $host,
-                'startTime' => $blocking['startTime'],
-                'pending' => true,
-                'outputProcessType' => $blocking['processType'],
-            ]);
-        }
-
-        $processType = $this->getProcessType($host);
-        $pidFile = $this->processManager->getPidFilePath($processType);
+        $pidFile = $this->processManager->getPidFilePath(self::PROCESS_TYPE);
 
         // Clean up stale processes
         $this->processManager->cleanupStaleProcess($pidFile);
@@ -74,16 +61,14 @@ class StaticController extends AbstractController
             return $this->renderAdmin('@PushwordStatic/running.html.twig', [
                 'host' => $host,
                 'startTime' => $processInfo['startTime'],
-                'pending' => false,
-                'outputProcessType' => $processType,
             ]);
         }
 
         // Start new process
         try {
             // Initialize output storage before starting background process
-            $this->outputStorage->clear($processType);
-            $this->outputStorage->setStatus($processType, 'running');
+            $this->outputStorage->clear(self::PROCESS_TYPE);
+            $this->outputStorage->setStatus(self::PROCESS_TYPE, 'running');
 
             $commandParts = ['php', 'bin/console', 'pw:static'];
             if (null !== $host) {
@@ -91,21 +76,19 @@ class StaticController extends AbstractController
             }
 
             $this->backgroundTaskDispatcher->dispatch(
-                $processType,
+                self::PROCESS_TYPE,
                 $commandParts,
                 self::COMMAND_PATTERN,
             );
         } catch (Exception $exception) {
-            $this->outputStorage->write($processType, 'Failed to start background process: '.$exception->getMessage()."\n");
-            $this->outputStorage->setStatus($processType, 'error');
+            $this->outputStorage->write(self::PROCESS_TYPE, 'Failed to start background process: '.$exception->getMessage()."\n");
+            $this->outputStorage->setStatus(self::PROCESS_TYPE, 'error');
         }
 
         // Show running page with HTMX polling
         return $this->renderAdmin('@PushwordStatic/running.html.twig', [
             'host' => $host,
             'startTime' => time(),
-            'pending' => false,
-            'outputProcessType' => $processType,
         ]);
     }
 
@@ -115,7 +98,7 @@ class StaticController extends AbstractController
         options: ['defaults' => ['host' => '']]
     )]
     #[IsGranted('ROLE_PUSHWORD_ADMIN')]
-    public function getStaticOutput(Request $request, string $host = ''): Response
+    public function getStaticOutput(string $host = ''): Response
     {
         $host = '' === $host ? null : $host;
 
@@ -124,10 +107,7 @@ class StaticController extends AbstractController
             throw $this->createNotFoundException('Invalid host parameter');
         }
 
-        $pending = $request->query->getBoolean('pending');
-        $outputProcessType = $request->query->getString('pt', '') ?: $this->getProcessType($host);
-
-        $pidFile = $this->processManager->getPidFilePath($outputProcessType);
+        $pidFile = $this->processManager->getPidFilePath(self::PROCESS_TYPE);
 
         // Clean up stale processes
         $this->processManager->cleanupStaleProcess($pidFile);
@@ -137,12 +117,12 @@ class StaticController extends AbstractController
         $isRunning = $processInfo['isRunning'];
 
         // Get full output from shared storage
-        $outputData = $this->outputStorage->read($outputProcessType);
+        $outputData = $this->outputStorage->read(self::PROCESS_TYPE);
         $output = $outputData['content'];
         $errors = $this->parseErrors($output);
 
         // Determine status from storage or process state
-        $storageStatus = $this->outputStorage->getStatus($outputProcessType);
+        $storageStatus = $this->outputStorage->getStatus(self::PROCESS_TYPE);
         if ($isRunning) {
             $status = 'running';
         } elseif ('error' === $storageStatus || [] !== $errors) {
@@ -151,22 +131,11 @@ class StaticController extends AbstractController
             $status = 'completed';
         }
 
-        // If pending and process done, auto-redirect to trigger new generation
-        if ($pending && 'running' !== $status) {
-            $response = new Response('', Response::HTTP_OK);
-            $params = null !== $host ? ['host' => $host] : [];
-            $response->headers->set('HX-Redirect', $this->generateUrl('admin_static_generator', $params));
-
-            return $response;
-        }
-
         $response = $this->render('@PushwordStatic/output_fragment.html.twig', [
             'status' => $status,
             'output' => $output,
             'errors' => $errors,
             'host' => $host,
-            'pending' => $pending,
-            'outputProcessType' => $outputProcessType,
         ]);
 
         // Stop HTMX polling when process is complete
@@ -175,40 +144,6 @@ class StaticController extends AbstractController
         }
 
         return $response;
-    }
-
-    private function getProcessType(?string $host): string
-    {
-        return null === $host ? self::PROCESS_TYPE : self::PROCESS_TYPE.'--'.$host;
-    }
-
-    /** @return array{startTime: int|null, processType: string}|null */
-    private function findBlockingProcess(?string $host): ?array
-    {
-        if (null !== $host) {
-            return $this->checkProcessRunning(self::PROCESS_TYPE);
-        }
-
-        foreach ($this->siteRegistry->getHosts() as $h) {
-            $result = $this->checkProcessRunning(self::PROCESS_TYPE.'--'.$h);
-            if (null !== $result) {
-                return $result;
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * @return array{startTime: int|null, processType: string}|null
-     */
-    private function checkProcessRunning(string $processType): ?array
-    {
-        $pidFile = $this->processManager->getPidFilePath($processType);
-        $this->processManager->cleanupStaleProcess($pidFile);
-        $info = $this->processManager->getProcessInfo($pidFile);
-
-        return $info['isRunning'] ? ['startTime' => $info['startTime'], 'processType' => $processType] : null;
     }
 
     private function isValidHost(string $host): bool

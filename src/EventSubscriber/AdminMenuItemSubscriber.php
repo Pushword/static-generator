@@ -2,13 +2,12 @@
 
 namespace Pushword\StaticGenerator\EventSubscriber;
 
-use Pushword\Admin\Menu\AbstractRouteMenuWithHostsSubscriber;
-use Pushword\Core\Site\SiteRegistry;
+use Pushword\Admin\Menu\AbstractRouteMenuItemSubscriber;
 
-final readonly class AdminMenuItemSubscriber extends AbstractRouteMenuWithHostsSubscriber
+final readonly class AdminMenuItemSubscriber extends AbstractRouteMenuItemSubscriber
 {
-    public function __construct(SiteRegistry $siteRegistry)
+    public function __construct()
     {
-        parent::__construct($siteRegistry, 'Static Generator', 'fa fa-file-code', 'admin_static_generator', 300);
+        parent::__construct('Static Generator', 'fa fa-file-code', 'admin_static_generator', 300);
     }
 }

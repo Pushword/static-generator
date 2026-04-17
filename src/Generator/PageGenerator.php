@@ -83,9 +83,7 @@ class PageGenerator extends AbstractGenerator
         $stopwatch = $this->staticAppGenerator->getStopwatch();
 
         $request = Request::create($liveUri);
-        if (null !== $page) {
-            $request->attributes->set('_pushword_page', $page);
-        }
+        // $request->headers->set('host', $this->app->getMainHost());
 
         $stopwatch?->start('kernel.handle');
         $response = static::getKernel()->handle($request);
@@ -136,11 +134,6 @@ class PageGenerator extends AbstractGenerator
             $stopwatch?->start('html.compress');
             $content = $this->compress($content);
             $stopwatch?->stop('html.compress');
-        }
-
-        // Skip write+compression if content is identical (useful in incremental mode)
-        if (file_exists($destination) && $content === file_get_contents($destination)) {
-            return;
         }
 
         $stopwatch?->start('file.write');

@@ -2,7 +2,6 @@
 
 namespace Pushword\StaticGenerator\DependencyInjection;
 
-use Deprecated;
 use Pushword\StaticGenerator\Generator\CaddyfileGenerator;
 use Pushword\StaticGenerator\Generator\CNAMEGenerator;
 use Pushword\StaticGenerator\Generator\CopierGenerator;
@@ -22,11 +21,7 @@ class Configuration implements ConfigurationInterface
         'static_generators',
         'static_symlink',
         'static_dir',
-        'static_assets',
-        'static_assets_clean',
         'static_copy',
-        'static_html_max_age',
-        'static_html_stale_while_revalidate',
     ];
 
     /**
@@ -86,34 +81,16 @@ class Configuration implements ConfigurationInterface
     /**
      * @var string[]
      */
-    final public const array DEFAULT_ASSETS = ['assets', 'bundles'];
-
-    #[Deprecated(message: 'Use DEFAULT_ASSETS instead')]
-    final public const array DEFAULT_COPY = self::DEFAULT_ASSETS;
+    final public const array DEFAULT_COPY = ['assets', 'bundles'];
 
     public function getConfigTreeBuilder(): TreeBuilder
     {
         $treeBuilder = new TreeBuilder('static_generator');
         $treeBuilder->getRootNode()->children()
             ->variableNode('app_fallback_properties')->defaultValue(self::DEFAULT_APP_FALLBACK)->cannotBeEmpty()->end()
-            ->variableNode('static_symlink')
-                ->info("true/false for all, or array of ['media', 'assets'] to symlink selectively. GitHub pages forces copy.")
+            ->booleanNode('static_symlink')
+                ->info('For github pages, this params is forced to false (need a hard copy).')
                 ->defaultTrue()
-                ->validate()
-                    ->ifTrue(static function (mixed $v): bool {
-                        if (\is_bool($v)) {
-                            return false;
-                        }
-
-                        if (\is_array($v)) {
-                            /** @var array<string> $v */
-                            return [] !== array_diff($v, ['media', 'assets']);
-                        }
-
-                        return true;
-                    })
-                    ->thenInvalid('static_symlink must be a bool or an array containing only "media" and/or "assets".')
-                ->end()
             ->end()
             ->variableNode('static_generators')
                 ->defaultValue(self::DEFAULT_GENERATOR)
@@ -128,25 +105,9 @@ class Configuration implements ConfigurationInterface
                 ->defaultValue('%kernel.project_dir%/static/{main_host}')
                 ->info('If null or empty, static dir will be %kernel.project_dir%/static/{main_host}/.')
             ->end()
-            ->variableNode('static_assets')
-                ->info('file or folder in your public dir to copy in static')
-                ->defaultValue(self::DEFAULT_ASSETS)
-            ->end()
-            ->booleanNode('static_assets_clean')
-                ->info('Remove stale files in static assets dir before copying (useful with Vite hashed filenames)')
-                ->defaultFalse()
-            ->end()
             ->variableNode('static_copy')
-                ->info('Deprecated: use static_assets instead')
-                ->defaultValue(self::DEFAULT_ASSETS)
-            ->end()
-            ->integerNode('static_html_max_age')
-                ->info('Cache TTL for HTML pages in seconds (default: 10800 = 3 hours)')
-                ->defaultValue(10800)
-            ->end()
-            ->integerNode('static_html_stale_while_revalidate')
-                ->info('stale-while-revalidate TTL in seconds, 0 to disable (default: 3600 = 1 hour)')
-                ->defaultValue(3600)
+                ->info('file or folder in your public dir to copy in static')
+                ->defaultValue(self::DEFAULT_COPY)
             ->end()
         ->end();
 
