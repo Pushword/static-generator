@@ -1,11 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Pushword\StaticGenerator\Tests\Generator;
 
 use PHPUnit\Framework\TestCase;
 use Pushword\StaticGenerator\Generator\HtmlMinifier;
 
-class HtmlMinifierTest extends TestCase
+final class HtmlMinifierTest extends TestCase
 {
     public function testCompressRemovesComments(): void
     {

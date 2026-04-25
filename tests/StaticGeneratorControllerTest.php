@@ -1,9 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Pushword\StaticGenerator\Tests;
 
 use EasyCorp\Bundle\EasyAdminBundle\Contracts\Provider\AdminContextProviderInterface;
-use Override;
 use PHPUnit\Framework\Attributes\Group;
 use Pushword\Admin\Tests\AbstractAdminTestClass;
 use Pushword\Core\BackgroundTask\BackgroundTaskDispatcherInterface;
@@ -17,9 +18,8 @@ use Symfony\Component\HttpFoundation\Request;
 use Twig\Error\RuntimeError;
 
 #[Group('integration')]
-class StaticGeneratorControllerTest extends AbstractAdminTestClass
+final class StaticGeneratorControllerTest extends AbstractAdminTestClass
 {
-    #[Override]
     protected function tearDown(): void
     {
         // Wait for any background static generation process to complete
@@ -27,7 +27,6 @@ class StaticGeneratorControllerTest extends AbstractAdminTestClass
         $processManager = self::getContainer()->get(BackgroundProcessManager::class);
         $outputStorage = self::getContainer()->get(ProcessOutputStorage::class);
         $pidFile = $processManager->getPidFilePath('static-generator');
-
         // Wait up to 30 seconds for the process to complete
         $maxWait = 30;
         $waited = 0;
@@ -45,7 +44,6 @@ class StaticGeneratorControllerTest extends AbstractAdminTestClass
         // Clean up PID file and output storage
         new Filesystem()->remove($pidFile);
         $outputStorage->clear('static-generator');
-
         parent::tearDown();
     }
 

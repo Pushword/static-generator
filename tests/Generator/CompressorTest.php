@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Pushword\StaticGenerator\Tests\Generator;
 
 use PHPUnit\Framework\TestCase;
@@ -7,7 +9,7 @@ use Pushword\StaticGenerator\Generator\CompressionAlgorithm;
 use Pushword\StaticGenerator\Generator\Compressor;
 use Symfony\Component\Filesystem\Filesystem;
 
-class CompressorTest extends TestCase
+final class CompressorTest extends TestCase
 {
     private string $tempDir;
 
