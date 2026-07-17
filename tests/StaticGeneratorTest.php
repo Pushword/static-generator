@@ -11,6 +11,7 @@ use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\MockObject\MockObject;
 use Psr\Log\LoggerInterface;
 use Pushword\Core\Entity\Page;
+use Pushword\Core\Repository\MediaRepository;
 use Pushword\Core\Repository\PageRepository;
 use Pushword\Core\Site\SiteRegistry;
 use Pushword\StaticGenerator\Event\StaticPostGenerateEvent;
@@ -392,6 +393,25 @@ final class StaticGeneratorTest extends KernelTestCase
 
         $staticDir = $this->getStaticDir();
         self::assertFileExists($staticDir);
+    }
+
+    /**
+     * A build writes no media, so it must not advance the media version: a bump
+     * here invalidates every image-bearing markdown fragment on every build.
+     * Media writes bump the version themselves (MediaCacheInvalidationListener).
+     */
+    public function testBuildLeavesTheMediaVersionUntouched(): void
+    {
+        $generator = $this->getStaticAppGenerator();
+        $this->overrideStaticDir();
+
+        $mediaRepository = AbstractGenerator::getKernel()->getContainer()->get(MediaRepository::class);
+        $readVersion = new ReflectionMethod(MediaRepository::class, 'readVersion');
+        $before = $readVersion->invoke($mediaRepository);
+
+        $generator->generate('localhost.dev');
+
+        self::assertSame($before, $readVersion->invoke($mediaRepository));
     }
 
     private function getGenerator(string $name): GeneratorInterface
@@ -1228,6 +1248,42 @@ final class StaticGeneratorTest extends KernelTestCase
         self::assertStringContainsString('[W0]', $output);
         self::assertStringContainsString('workers', $output);
         self::assertStringContainsString('success', $output);
+    }
+
+    #[Group('serial')]
+    public function testParallelWorkersPopulateAnOpcacheFileCache(): void
+    {
+        self::bootKernel();
+        $this->overrideStaticDir();
+        $this->cleanupPidFiles();
+
+        /** @var string $projectDir */
+        $projectDir = self::getContainer()->getParameter('kernel.project_dir');
+        $opcacheDir = $projectDir.'/var/cache/opcache';
+        new Filesystem()->remove($opcacheDir);
+
+        $application = new Application(self::$kernel); // @phpstan-ignore-line
+        $tester = new CommandTester($application->find('pw:static'));
+        $tester->execute(['host' => 'localhost.dev', '--workers' => 2, '--format' => 'text']);
+        self::assertStringContainsString('success', $tester->getDisplay());
+
+        self::assertDirectoryExists($opcacheDir);
+
+        if (! \extension_loaded('Zend OPcache')) {
+            return; // The flags are inert without the extension; only the dir wiring is observable.
+        }
+
+        $hasCachedScript = false;
+        /** @var SplFileInfo $file */
+        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($opcacheDir, FilesystemIterator::SKIP_DOTS)) as $file) {
+            if ($file->isFile()) {
+                $hasCachedScript = true;
+
+                break;
+            }
+        }
+
+        self::assertTrue($hasCachedScript, 'Workers should write compiled scripts into the shared opcache file cache.');
     }
 
     public function testStateMergeFromFile(): void
