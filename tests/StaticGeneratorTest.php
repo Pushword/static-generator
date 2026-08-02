@@ -12,6 +12,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\MockObject\MockObject;
 use Psr\Log\LoggerInterface;
+use Pushword\Core\Cache\RenderEpoch;
 use Pushword\Core\Entity\Page;
 use Pushword\Core\Repository\MediaRepository;
 use Pushword\Core\Repository\PageRepository;
@@ -346,15 +347,24 @@ final class StaticGeneratorTest extends KernelTestCase
 
             // Test page state
             $pageUpdatedAt = new DateTimeImmutable('2024-01-15 10:00:00');
-            $stateManager2->setPageState('test.host', 'test-page', $pageUpdatedAt);
+            $stateManager2->setPageState('test.host', 'test-page', $pageUpdatedAt, 'epoch-1');
             $stateManager2->save();
 
-            // Verify page doesn't need regeneration with same timestamp
-            self::assertFalse($stateManager2->needsRegeneration('test.host', 'test-page', $pageUpdatedAt));
+            // Verify page doesn't need regeneration with same timestamp and epoch
+            self::assertFalse($stateManager2->needsRegeneration('test.host', 'test-page', $pageUpdatedAt, 'epoch-1'));
 
             // Verify page needs regeneration with different timestamp
             $newUpdatedAt = new DateTimeImmutable('2024-01-16 10:00:00');
-            self::assertTrue($stateManager2->needsRegeneration('test.host', 'test-page', $newUpdatedAt));
+            self::assertTrue($stateManager2->needsRegeneration('test.host', 'test-page', $newUpdatedAt, 'epoch-1'));
+
+            // A bumped epoch makes the page stale even with an unchanged timestamp
+            self::assertTrue($stateManager2->needsRegeneration('test.host', 'test-page', $pageUpdatedAt, 'epoch-2'));
+
+            // Swept epoch is the sampled value recorded on success, absent until then
+            self::assertNull($stateManager2->getSweptEpoch('test.host'));
+            $stateManager2->setSweptEpoch('test.host', 'epoch-1');
+            $stateManager2->save();
+            self::assertSame('epoch-1', new GenerationStateManager($tempDir)->getSweptEpoch('test.host'));
         } finally {
             new Filesystem()->remove($tempDir);
             putenv(false === $previousVarDir ? 'PUSHWORD_TEST_VAR_DIR' : 'PUSHWORD_TEST_VAR_DIR='.$previousVarDir);
@@ -380,6 +390,7 @@ final class StaticGeneratorTest extends KernelTestCase
             $generatorBag->get(RedirectionManager::class), // @phpstan-ignore-line
             $logger,
             new GenerationStateManager($projectDir),
+            self::getContainer()->get(RenderEpoch::class),
             self::getContainer()->get(EventDispatcherInterface::class),
             self::getContainer()->get(PageRepository::class),
             $projectDir,
@@ -1348,6 +1359,43 @@ final class StaticGeneratorTest extends KernelTestCase
         new Filesystem()->remove([$seqDir, $parDir]);
     }
 
+    /**
+     * Workers stamp state entries through their own path (generateSlugs → worker
+     * state file → parent merge), separate from the sequential loop. If they
+     * stamped a wrong or missing epoch, every page would read as stale on the
+     * next incremental run and the "Skipped" branch would never be taken.
+     */
+    #[Group('serial')]
+    public function testIncrementalAfterParallelBuildSkipsUnchangedPages(): void
+    {
+        self::bootKernel();
+
+        $parDir = sys_get_temp_dir().'/pushword-static-par-incr-'.getmypid();
+        $siteConfig = self::getContainer()->get(SiteRegistry::class)->switchSite('localhost.dev')->get();
+        $siteConfig->setCustomProperty('static_dir', $parDir);
+        $siteConfig->setCustomProperty('cache', 'none');
+        $this->cleanupPidFiles();
+
+        $application = new Application(self::$kernel); // @phpstan-ignore-line
+        $tester = new CommandTester($application->find('pw:static'));
+
+        try {
+            $tester->execute(['host' => 'localhost.dev', '--workers' => 2, '--format' => 'text']);
+            self::assertStringContainsString('success', $tester->getDisplay(), 'Parallel build failed: '.$tester->getDisplay());
+
+            $this->cleanupPidFiles();
+            $tester->execute(['host' => 'localhost.dev', '--incremental' => true, '--format' => 'text']);
+
+            $output = $tester->getDisplay();
+            self::assertStringContainsString('success', $output, 'Incremental run failed: '.$output);
+            // Not homepage/pushword: fixtures carrying redirections are always
+            // re-processed to rebuild the redirection map, epoch or not.
+            self::assertStringContainsString('Skipped localhost.dev/kitchen-sink (unchanged)', $output);
+        } finally {
+            new Filesystem()->remove($parDir);
+        }
+    }
+
     #[Group('serial')]
     public function testParallelGenerationShowsWorkerPrefix(): void
     {
@@ -1411,12 +1459,13 @@ final class StaticGeneratorTest extends KernelTestCase
             $stateManager = new GenerationStateManager($tempDir);
             $stateManager->setLastGenerationTime('test.host');
 
-            // Create a worker state file
+            // Create a worker state file — page-b simulates a legacy entry written
+            // before the epoch existed: it must read as stale whatever the epoch.
             $workerFile = $tempDir.'/var/.worker-0.json';
             file_put_contents($workerFile, json_encode([
                 'test.host' => [
                     'pages' => [
-                        'page-a' => ['generatedAt' => '2025-01-01T00:00:00+00:00', 'pageUpdatedAt' => '2025-01-01T00:00:00+00:00'],
+                        'page-a' => ['generatedAt' => '2025-01-01T00:00:00+00:00', 'pageUpdatedAt' => '2025-01-01T00:00:00+00:00', 'epoch' => 'epoch-1'],
                         'page-b' => ['generatedAt' => '2025-01-01T00:00:00+00:00', 'pageUpdatedAt' => '2025-01-01T00:00:00+00:00'],
                     ],
                 ],
@@ -1424,8 +1473,8 @@ final class StaticGeneratorTest extends KernelTestCase
 
             $stateManager->mergeFromFile($workerFile);
 
-            self::assertFalse($stateManager->needsRegeneration('test.host', 'page-a', new DateTimeImmutable('2025-01-01T00:00:00+00:00')));
-            self::assertFalse($stateManager->needsRegeneration('test.host', 'page-b', new DateTimeImmutable('2025-01-01T00:00:00+00:00')));
+            self::assertFalse($stateManager->needsRegeneration('test.host', 'page-a', new DateTimeImmutable('2025-01-01T00:00:00+00:00'), 'epoch-1'));
+            self::assertTrue($stateManager->needsRegeneration('test.host', 'page-b', new DateTimeImmutable('2025-01-01T00:00:00+00:00'), 'epoch-1'));
             self::assertFileDoesNotExist($workerFile, 'Worker file should be cleaned up after merge');
         } finally {
             new Filesystem()->remove($tempDir);
