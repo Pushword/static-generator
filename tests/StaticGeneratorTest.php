@@ -2,6 +2,7 @@
 
 namespace Pushword\StaticGenerator;
 
+use Composer\Autoload\ClassLoader;
 use DateTime;
 use DateTimeImmutable;
 use Exception;
@@ -36,6 +37,7 @@ use Pushword\StaticGenerator\Generator\RedirectionHtmlGenerator;
 use Pushword\StaticGenerator\Generator\RedirectionManager;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
+use ReflectionClass;
 use ReflectionMethod;
 use ReflectionProperty;
 
@@ -44,11 +46,13 @@ use function Safe\realpath;
 use SplFileInfo;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+use Symfony\Component\Console\Output\BufferedOutput;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\KernelInterface;
+use Symfony\Component\Process\Process;
 use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
 
 #[Group('integration')]
@@ -1500,23 +1504,102 @@ final class StaticGeneratorTest extends KernelTestCase
         $tester->execute(['host' => 'localhost.dev', '--workers' => 2, '--format' => 'text']);
         self::assertStringContainsString('success', $tester->getDisplay());
 
-        self::assertDirectoryExists($opcacheDir);
+        // One cache per worker, never a shared one: concurrent writers into a
+        // single file cache segfault the workers on some PHP builds.
+        self::assertDirectoryExists($opcacheDir.'/w0');
 
-        if (! \extension_loaded('Zend OPcache')) {
-            return; // The flags are inert without the extension; only the dir wiring is observable.
+        // The flags are the worker's, so the precondition is the worker's too.
+        // Reading this process says little: opcache can be loaded here and still
+        // cache nothing in a child — built without file-cache support, or with
+        // the ini locked. Probe a child spawned the way the generator spawns
+        // one, and only hold the workers to what that child proved possible.
+        if (! $this->aChildCanFileCache()) {
+            return;
         }
 
-        $hasCachedScript = false;
-        /** @var SplFileInfo $file */
-        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($opcacheDir, FilesystemIterator::SKIP_DOTS)) as $file) {
-            if ($file->isFile()) {
-                $hasCachedScript = true;
+        self::assertTrue(
+            $this->holdsAFile($opcacheDir.'/w0'),
+            'A child of this process file-caches, so the workers should have written compiled scripts too.',
+        );
+    }
 
-                break;
+    /**
+     * Whether a child process, given the flags the workers get, actually writes
+     * compiled scripts to disk. `-r` code is never cached — the required file is
+     * what proves the capability.
+     */
+    private function aChildCanFileCache(): bool
+    {
+        $probeDir = sys_get_temp_dir().'/pushword-opcache-probe-'.getmypid();
+        $filesystem = new Filesystem();
+        $filesystem->remove($probeDir);
+        $filesystem->mkdir($probeDir);
+
+        $subject = (string) new ReflectionClass(ClassLoader::class)->getFileName();
+
+        $probe = new Process([
+            'php',
+            '-d', 'opcache.enable=1',
+            '-d', 'opcache.enable_cli=1',
+            '-d', 'opcache.file_cache='.$probeDir,
+            '-d', 'opcache.validate_timestamps=1',
+            '-r', 'require '.var_export($subject, true).';',
+        ]);
+        $probe->run();
+
+        $cached = $this->holdsAFile($probeDir);
+        $filesystem->remove($probeDir);
+
+        return $cached;
+    }
+
+    /**
+     * A worker killed by a signal writes nothing before dying, so its exit code
+     * is everything the parent gets — reported as a bare number, every crash read
+     * `failed (exit 139):` with nothing after the colon. `exit(139)` stands in for
+     * the segfault here: Symfony reports a signaled child as 128 + the signal, so
+     * a real SIGSEGV reaches this code as that same exit code and empty stderr.
+     */
+    public function testAFailedWorkerIsReportedWithWhatKilledItAndItsStderr(): void
+    {
+        self::bootKernel();
+        $staticAppGenerator = self::getContainer()->get(StaticAppGenerator::class);
+
+        $output = new BufferedOutput();
+        $staticAppGenerator->setOutput($output);
+
+        // A worker that dies leaves no state files behind, as here.
+        $missing = sys_get_temp_dir().'/pushword-no-such-worker-file-'.getmypid().'.json';
+
+        $workers = [];
+        foreach ([0 => 'exit(139);', 1 => 'fwrite(STDERR, "PHP Fatal error: boom\n"); exit(255);'] as $i => $code) {
+            $process = new Process(['php', '-r', $code]);
+            $process->start();
+            $workers[$i] = ['process' => $process, 'stateFile' => $missing, 'redirectionsFile' => $missing];
+        }
+
+        new ReflectionMethod(StaticAppGenerator::class, 'waitForWorkers')->invoke($staticAppGenerator, $workers);
+
+        $errors = $staticAppGenerator->getErrors();
+        self::assertCount(2, $errors);
+        self::assertSame('Worker 0 failed (exit 139: Segmentation violation): no error output', $errors[0]);
+        self::assertStringContainsString('Worker 1 failed (exit 255:', $errors[1]);
+        self::assertStringContainsString('PHP Fatal error: boom', $errors[1]);
+
+        // Stderr also reaches the operator while the build runs, not only after it.
+        self::assertStringContainsString('[W1] PHP Fatal error: boom', $output->fetch());
+    }
+
+    private function holdsAFile(string $dir): bool
+    {
+        /** @var SplFileInfo $file */
+        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)) as $file) {
+            if ($file->isFile()) {
+                return true;
             }
         }
 
-        self::assertTrue($hasCachedScript, 'Workers should write compiled scripts into the shared opcache file cache.');
+        return false;
     }
 
     public function testStateMergeFromFile(): void
