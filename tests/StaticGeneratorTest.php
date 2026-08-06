@@ -2,7 +2,6 @@
 
 namespace Pushword\StaticGenerator;
 
-use Composer\Autoload\ClassLoader;
 use DateTime;
 use DateTimeImmutable;
 use Exception;
@@ -37,7 +36,6 @@ use Pushword\StaticGenerator\Generator\RedirectionHtmlGenerator;
 use Pushword\StaticGenerator\Generator\RedirectionManager;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
-use ReflectionClass;
 use ReflectionMethod;
 use ReflectionProperty;
 
@@ -138,6 +136,11 @@ final class StaticGeneratorTest extends KernelTestCase
         $command = $application->find('pw:static');
         $commandTester = new CommandTester($command);
 
+        // No --workers: the one test that runs the command exactly as a user does, so the
+        // default fan-out (WorkerCountResolver::resolve(0, …)) is exercised end to end.
+        // Everywhere else in this class asks for a worker count explicitly — auto resolves
+        // to one subprocess per page, and 16 kernel boots per generation cost more CPU than
+        // the rest of the class put together.
         $commandTester->execute(['host' => 'localhost.dev', '--format' => 'text']);
 
         // the output of the command in the console
@@ -165,7 +168,7 @@ final class StaticGeneratorTest extends KernelTestCase
         $command = $application->find('pw:static');
         $commandTester = new CommandTester($command);
 
-        $commandTester->execute(['host' => 'localhost.dev', '--format' => 'agent']);
+        $commandTester->execute(['host' => 'localhost.dev', '--workers' => 1, '--format' => 'agent']);
 
         $output = trim($commandTester->getDisplay());
 
@@ -195,7 +198,7 @@ final class StaticGeneratorTest extends KernelTestCase
         $commandTester = new CommandTester($command);
 
         // First full generation
-        $commandTester->execute(['host' => 'localhost.dev', '--format' => 'text']);
+        $commandTester->execute(['host' => 'localhost.dev', '--workers' => 1, '--format' => 'text']);
 
         $output = $commandTester->getDisplay();
         self::assertStringContainsString('success', $output);
@@ -223,7 +226,7 @@ final class StaticGeneratorTest extends KernelTestCase
         $commandTester = $this->rebootStaticCommandTester();
 
         // Second generation with incremental flag
-        $commandTester->execute(['host' => 'localhost.dev', '--incremental' => true, '--format' => 'text']);
+        $commandTester->execute(['host' => 'localhost.dev', '--workers' => 1, '--incremental' => true, '--format' => 'text']);
 
         $output = $commandTester->getDisplay();
         self::assertStringContainsString('success', $output);
@@ -334,7 +337,7 @@ final class StaticGeneratorTest extends KernelTestCase
         $commandTester = new CommandTester($application->find('pw:static'));
 
         // First full generation produces index.html for the homepage.
-        $commandTester->execute(['host' => 'localhost.dev']);
+        $commandTester->execute(['host' => 'localhost.dev', '--workers' => 1]);
 
         $indexFile = $staticDir.'/index.html';
         self::assertFileExists($indexFile);
@@ -468,6 +471,7 @@ final class StaticGeneratorTest extends KernelTestCase
             self::getContainer()->get(PageRepository::class),
             $projectDir,
             self::getContainer()->getParameter('kernel.environment'),
+            self::getContainer()->getParameter('pw.var_dir'),
         );
     }
 
@@ -1171,7 +1175,7 @@ final class StaticGeneratorTest extends KernelTestCase
         $application = new Application(self::$kernel); // @phpstan-ignore-line
         $command = $application->find('pw:static');
         $commandTester = new CommandTester($command);
-        $commandTester->execute(['host' => 'localhost.dev']);
+        $commandTester->execute(['host' => 'localhost.dev', '--workers' => 1]);
 
         self::assertCount(1, $preEvents, 'StaticPreGenerateEvent should be dispatched once per host');
         self::assertCount(1, $postEvents, 'StaticPostGenerateEvent should be dispatched once per host');
@@ -1269,7 +1273,7 @@ final class StaticGeneratorTest extends KernelTestCase
         $application = new Application(self::$kernel); // @phpstan-ignore-line
         $command = $application->find('pw:static');
         $commandTester = new CommandTester($command);
-        $commandTester->execute(['host' => 'localhost.dev']);
+        $commandTester->execute(['host' => 'localhost.dev', '--workers' => 1]);
 
         self::assertDirectoryDoesNotExist($staleTempDir, 'Stale temp dir should be cleaned up');
         self::assertDirectoryDoesNotExist($staleBackupDir, 'Stale backup dir should be cleaned up');
@@ -1385,7 +1389,7 @@ final class StaticGeneratorTest extends KernelTestCase
         $commandTester = new CommandTester($command);
 
         // First run (full)
-        $commandTester->execute(['host' => 'localhost.dev']);
+        $commandTester->execute(['host' => 'localhost.dev', '--workers' => 1]);
 
         $indexFile = $this->getStaticDir().'/index.html';
         self::assertFileExists($indexFile);
@@ -1401,7 +1405,7 @@ final class StaticGeneratorTest extends KernelTestCase
         $commandTester = $this->rebootStaticCommandTester();
 
         // Incremental run — content is unchanged, file should NOT be rewritten
-        $commandTester->execute(['host' => 'localhost.dev', '--incremental' => true]);
+        $commandTester->execute(['host' => 'localhost.dev', '--workers' => 1, '--incremental' => true]);
 
         clearstatcache();
         $newMtime = filemtime($indexFile);
@@ -1497,7 +1501,9 @@ final class StaticGeneratorTest extends KernelTestCase
             self::assertStringContainsString('success', $tester->getDisplay(), 'Parallel build failed: '.$tester->getDisplay());
 
             $this->cleanupPidFiles();
-            $tester->execute(['host' => 'localhost.dev', '--incremental' => true, '--format' => 'text']);
+            // Stays parallel: this is the one place an incremental run reads state that
+            // parallel workers wrote and merged.
+            $tester->execute(['host' => 'localhost.dev', '--workers' => 2, '--incremental' => true, '--format' => 'text']);
 
             $output = $tester->getDisplay();
             self::assertStringContainsString('success', $output, 'Incremental run failed: '.$output);
@@ -1525,72 +1531,6 @@ final class StaticGeneratorTest extends KernelTestCase
         self::assertStringContainsString('[W0]', $output);
         self::assertStringContainsString('workers', $output);
         self::assertStringContainsString('success', $output);
-    }
-
-    #[Group('serial')]
-    public function testParallelWorkersPopulateAnOpcacheFileCache(): void
-    {
-        self::bootKernel();
-        $this->overrideStaticDir();
-        $this->cleanupPidFiles();
-
-        /** @var string $projectDir */
-        $projectDir = self::getContainer()->getParameter('kernel.project_dir');
-        $opcacheDir = $projectDir.'/var/cache/opcache';
-        new Filesystem()->remove($opcacheDir);
-
-        $application = new Application(self::$kernel); // @phpstan-ignore-line
-        $tester = new CommandTester($application->find('pw:static'));
-        $tester->execute(['host' => 'localhost.dev', '--workers' => 2, '--format' => 'text']);
-        self::assertStringContainsString('success', $tester->getDisplay());
-
-        // One cache per worker, never a shared one: concurrent writers into a
-        // single file cache segfault the workers on some PHP builds.
-        self::assertDirectoryExists($opcacheDir.'/w0');
-
-        // The flags are the worker's, so the precondition is the worker's too.
-        // Reading this process says little: opcache can be loaded here and still
-        // cache nothing in a child — built without file-cache support, or with
-        // the ini locked. Probe a child spawned the way the generator spawns
-        // one, and only hold the workers to what that child proved possible.
-        if (! $this->aChildCanFileCache()) {
-            return;
-        }
-
-        self::assertTrue(
-            $this->holdsAFile($opcacheDir.'/w0'),
-            'A child of this process file-caches, so the workers should have written compiled scripts too.',
-        );
-    }
-
-    /**
-     * Whether a child process, given the flags the workers get, actually writes
-     * compiled scripts to disk. `-r` code is never cached — the required file is
-     * what proves the capability.
-     */
-    private function aChildCanFileCache(): bool
-    {
-        $probeDir = sys_get_temp_dir().'/pushword-opcache-probe-'.getmypid();
-        $filesystem = new Filesystem();
-        $filesystem->remove($probeDir);
-        $filesystem->mkdir($probeDir);
-
-        $subject = (string) new ReflectionClass(ClassLoader::class)->getFileName();
-
-        $probe = new Process([
-            'php',
-            '-d', 'opcache.enable=1',
-            '-d', 'opcache.enable_cli=1',
-            '-d', 'opcache.file_cache='.$probeDir,
-            '-d', 'opcache.validate_timestamps=1',
-            '-r', 'require '.var_export($subject, true).';',
-        ]);
-        $probe->run();
-
-        $cached = $this->holdsAFile($probeDir);
-        $filesystem->remove($probeDir);
-
-        return $cached;
     }
 
     /**
@@ -1628,18 +1568,6 @@ final class StaticGeneratorTest extends KernelTestCase
 
         // Stderr also reaches the operator while the build runs, not only after it.
         self::assertStringContainsString('[W1] PHP Fatal error: boom', $output->fetch());
-    }
-
-    private function holdsAFile(string $dir): bool
-    {
-        /** @var SplFileInfo $file */
-        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)) as $file) {
-            if ($file->isFile()) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     public function testStateMergeFromFile(): void

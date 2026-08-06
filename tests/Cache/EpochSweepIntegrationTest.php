@@ -121,6 +121,10 @@ final class EpochSweepIntegrationTest extends KernelTestCase
 
         $stateManager->reload();
         $currentEpoch = $renderEpoch->get(self::HOST);
+        // Any render error aborts the state write (`setError()` sets abortGeneration),
+        // so an unrecorded epoch says "something failed to render", not "the epoch was
+        // not recorded". Name it, or the next reader debugs the wrong end.
+        self::assertSame([], $this->getGenerator()->getErrors(), 'the sweep hit a render error');
         self::assertSame($currentEpoch, $stateManager->getSweptEpoch(self::HOST), 'a completed sweep records the sampled epoch');
 
         // Edit the snippet: the page row is untouched (updatedAt frozen), yet its
