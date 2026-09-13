@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Pushword\StaticGenerator\Tests\Cache;
 
 use PHPUnit\Framework\Attributes\Group;
@@ -63,7 +65,7 @@ final class CacheClearCommandTest extends KernelTestCase
         self::assertStringContainsString('Clearing cache', $output);
         self::assertStringContainsString('Warming cache for localhost.dev', $output);
 
-        self::assertFileExists($this->cacheDir.'/index.html');
+        self::assertFileExists($this->cacheDir.'/index.html', $output);
         self::assertFileExists($this->cacheDir.'/index.html.gz');
         self::assertFileExists($this->cacheDir.'/index.html.br');
     }
