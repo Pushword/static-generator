@@ -20,6 +20,7 @@ use Pushword\Core\Cache\RenderEpoch;
 use Pushword\Core\Entity\Page;
 use Pushword\Core\Repository\MediaRepository;
 use Pushword\Core\Repository\PageRepository;
+use Pushword\Core\Service\EditorialTimezone;
 use Pushword\Core\Service\MediaCacheStorageAdapter;
 use Pushword\Core\Site\SiteRegistry;
 use Pushword\StaticGenerator\Event\StaticPostGenerateEvent;
@@ -193,6 +194,54 @@ final class StaticGeneratorTest extends KernelTestCase
         self::assertArrayHasKey('errors_count', $decoded);
         self::assertArrayHasKey('errors', $decoded);
         self::assertArrayHasKey('duration_ms', $decoded);
+        self::assertArrayNotHasKey('scheduled', $decoded, 'nothing is scheduled on the fixture host');
+    }
+
+    public function testStaticCommandNamesTheScheduledPagesItSkips(): void
+    {
+        self::bootKernel();
+        $em = self::getContainer()->get('doctrine.orm.default_entity_manager');
+        $scheduled = $this->makeProbePage('scheduled-probe');
+        $scheduled->publishedAt = new DateTime('2099-01-01 10:00:00');
+        // Unpublished too, but with no date to announce.
+        $draft = $this->makeProbePage('scheduled-draft-probe');
+        $draft->publishedAt = null;
+
+        $em->persist($scheduled);
+        $em->persist($draft);
+        $em->flush();
+
+        try {
+            $commandTester = $this->rebootStaticCommandTester();
+            $commandTester->execute(['host' => 'localhost.dev', '--workers' => 1, '--format' => 'text']);
+
+            self::assertSame(0, $commandTester->getStatusCode(), $commandTester->getDisplay());
+            self::assertStringContainsString(
+                'Scheduled localhost.dev/scheduled-probe (not generated before 2099-01-01 10:00+00:00)',
+                $commandTester->getDisplay(),
+            );
+            self::assertFileDoesNotExist($this->getStaticDir().'/scheduled-probe.html');
+            self::assertStringNotContainsString('scheduled-draft-probe', $commandTester->getDisplay(), 'a draft is not scheduled');
+
+            $commandTester = $this->rebootStaticCommandTester();
+            $commandTester->execute(['host' => 'localhost.dev', '--workers' => 1, '--format' => 'agent']);
+
+            $decoded = json_decode(trim($commandTester->getDisplay()), true, 512, \JSON_THROW_ON_ERROR);
+            self::assertIsArray($decoded);
+            self::assertIsArray($decoded['scheduled']);
+            self::assertContains(['page' => 'localhost.dev/scheduled-probe', 'publishedAt' => '2099-01-01 10:00+00:00'], $decoded['scheduled']);
+        } finally {
+            $resetEm = self::getContainer()->get('doctrine.orm.default_entity_manager');
+            $pageRepository = self::getContainer()->get(PageRepository::class);
+            foreach (['scheduled-probe', 'scheduled-draft-probe'] as $slug) {
+                $planted = $pageRepository->findOneBy(['host' => 'localhost.dev', 'slug' => $slug]);
+                if (null !== $planted) {
+                    $resetEm->remove($planted);
+                }
+            }
+
+            $resetEm->flush();
+        }
     }
 
     public function testIncrementalGeneration(): void
@@ -494,6 +543,7 @@ final class StaticGeneratorTest extends KernelTestCase
             self::getContainer()->get(RenderEpoch::class),
             self::getContainer()->get(EventDispatcherInterface::class),
             self::getContainer()->get(PageRepository::class),
+            new EditorialTimezone(),
             $projectDir,
             self::getContainer()->getParameter('kernel.environment'),
             self::getContainer()->getParameter('pw.var_dir'),
@@ -560,6 +610,18 @@ final class StaticGeneratorTest extends KernelTestCase
         self::assertStringContainsString('max-age=10800', $htaccess);
         self::assertStringContainsString('stale-while-revalidate=3600', $htaccess);
         self::assertStringContainsString('ErrorDocument 404 /404', $htaccess);
+
+        // The error page answers 404 at its own URL, localized ones included. The rule
+        // must run before `/slug` is rewritten to slug.html with END, which stops all
+        // later rules; its REDIRECT_STATUS guard lets the ErrorDocument redirect through.
+        $pattern = '^(?:(?:fr)/)?404$';
+        $rule = 'RewriteRule '.$pattern.' - [NC,R=404]';
+        self::assertStringContainsString("RewriteCond %{ENV:REDIRECT_STATUS} ^$\n".$rule, $htaccess);
+        self::assertLessThan(strpos($htaccess, 'RewriteRule ^(.+)$ $1.html'), strpos($htaccess, $rule));
+        foreach ([['404', true], ['fr/404', true], ['FR/404', true], ['seo/404', false], ['de/404', false], ['4040', false]] as [$path, $matches]) {
+            self::assertSame($matches, 1 === preg_match('~'.$pattern.'~i', $path), $path);
+        }
+
         self::assertStringContainsString("form-action 'self' https://localhost.dev", $htaccess);
         self::assertStringContainsString('Permissions-Policy', $htaccess);
         self::assertStringContainsString('Strict-Transport-Security', $htaccess);
@@ -663,6 +725,7 @@ final class StaticGeneratorTest extends KernelTestCase
         $caddyfile = (string) file_get_contents($this->getStaticDir().'/.Caddyfile');
         self::assertStringNotContainsString('@error_', $caddyfile);
         self::assertStringContainsString('rewrite * /404.html', $caddyfile);
+        self::assertStringContainsString("@not_found_page path /404.html\n\terror @not_found_page 404", $caddyfile);
         self::assertStringContainsString("form-action 'self' https://admin-block-editor.test", $caddyfile);
         self::assertStringContainsString('Permissions-Policy', $caddyfile);
         self::assertStringContainsString('Strict-Transport-Security', $caddyfile);
@@ -670,6 +733,7 @@ final class StaticGeneratorTest extends KernelTestCase
         self::assertStringContainsString("header @svg Content-Security-Policy \"sandbox; default-src 'none'", $caddyfile);
 
         $htaccess = (string) file_get_contents($this->getStaticDir().'/.htaccess');
+        self::assertStringContainsString('RewriteRule ^404$ - [NC,R=404]', $htaccess);
         self::assertStringContainsString('<FilesMatch "\.svg$">', $htaccess);
         self::assertStringContainsString("Header set Content-Security-Policy \"sandbox; default-src 'none'", $htaccess);
     }
@@ -689,6 +753,10 @@ final class StaticGeneratorTest extends KernelTestCase
         self::assertStringContainsString('stale-while-revalidate=3600', $caddyfile);
         self::assertStringContainsString('rewrite * /fr/404.html', $caddyfile);
         self::assertStringContainsString('rewrite * /404.html', $caddyfile);
+
+        // The error page answers 404 at its own URL. `error` runs after `rewrite`, so
+        // the matcher names the rewritten .html paths.
+        self::assertStringContainsString("@not_found_page path /404.html /fr/404.html\n\terror @not_found_page 404", $caddyfile);
     }
 
     /**
@@ -1267,6 +1335,47 @@ final class StaticGeneratorTest extends KernelTestCase
         $registry = self::getContainer()->get(SiteRegistry::class);
         foreach ($registry->getAll() as $host => $site) {
             self::assertFalse($site->isStatic, $host.' must not stay flagged as a static export');
+        }
+    }
+
+    /**
+     * Only cache mode leaves the error page to PHP. A full export has no PHP behind
+     * it, so the page is written like any other — the one /fr/ serves for a missing
+     * URL included — and the 404 status show() gives it at its own URL does not turn
+     * the render into an error.
+     */
+    public function testFullStaticExportStillWritesTheErrorPages(): void
+    {
+        self::bootKernel();
+        $this->overrideStaticDir();
+        $em = self::getContainer()->get('doctrine.orm.default_entity_manager');
+
+        $pages = [];
+        foreach ([['404', 'en', 'Root error probe'], ['fr/404', 'fr', 'Localized error probe']] as [$slug, $locale, $h1]) {
+            $page = $this->makeProbePage($slug);
+            $page->locale = $locale;
+            $page->h1 = $h1;
+            $em->persist($page);
+            $pages[] = $page;
+        }
+
+        $em->flush();
+
+        try {
+            $generator = $this->getGenerator(PagesGenerator::class);
+            self::assertInstanceOf(PagesGenerator::class, $generator);
+            $generator->generatePageBySlug('404', 'localhost.dev');
+            $generator->generatePageBySlug('fr/404', 'localhost.dev');
+
+            self::assertSame([], $this->getStaticAppGenerator()->getErrors());
+            self::assertStringContainsString('Root error probe', (string) file_get_contents($this->getStaticDir().'/404.html'));
+            self::assertStringContainsString('Localized error probe', (string) file_get_contents($this->getStaticDir().'/fr/404.html'));
+        } finally {
+            foreach ($pages as $page) {
+                $em->remove($page);
+            }
+
+            $em->flush();
         }
     }
 
