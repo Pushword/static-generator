@@ -6,13 +6,13 @@ without `proc_open`, Cargo, FFI or a native executable. No Hugo or Zola dependen
 
 ## Layout and ownership
 
-- `src/lib.rs`: the port of `../src/Generator/HtmlMinifier.php`, including the
-  legacy libxml serialization rules used by PHP after HTML5 parsing.
+- `src/lib.rs`: the port of `../src/Generator/HtmlMinifier.php`, with legacy
+  libxml and HTML5 serialization profiles selected to match PHP.
 - `src/main.rs`: a private stdin/stdout worker; no HTTP server, filesystem writes,
   database access or publication policy.
 - `../src/Generator/HtmlMinification.php`: PHP selection and fallback; bounded
   process transport is shared with content analysis in `Core\Service\NativeWorker`.
-- `tests/corpus.json`: 233 fixed and seeded examples shared by differential tests.
+- `tests/corpus.json`: fixed and seeded examples shared by differential tests.
 - `tests/`: the explicit native suite, including actual static publication.
 - `../tests/Generator/HtmlMinificationTest.php`: PHP-only transport/failure tests
   using a small fake executable; normal Pushword tests require no Rust build.
@@ -21,6 +21,23 @@ Keep behavioral changes and regressions in this package. The shared PHP worker
 does not require a combined executable or a generic operation registry; core
 content analysis and static minification remain independently configurable.
 The older `PoC/` is a frozen research history, not required for any command here.
+
+## Downstream performance investigation (2026-10-29)
+
+Protected elements are substituted during serialization and restored in one
+pass, avoiding a whole-document copy for every script or code block. Repeated
+blocks retain PHP's first-placeholder behavior. Nested protected markup,
+literal protected tags in script/style text and placeholder collisions use the
+existing sequential replacement rules. XML-invalid controls are removed from
+ordinary text and attributes as in libxml, while script/style text keeps them.
+
+All 10,512 downstream article documents matched PHP byte for byte, including
+nine control-character cases previously differing. One measured pass took
+24.4 seconds in PHP and 6.8 seconds in Rust. Separate component comparisons
+and full static build measurements are recorded in
+[`core/rust/benchmarks/2026-10-29-performance.json`](../../core/rust/benchmarks/2026-10-29-performance.json).
+These are shared-workstation observations, not a whole-site speedup claim.
+The native backend remains opt-in; no production configuration was changed.
 
 ## Automated Rust checks
 
@@ -83,6 +100,11 @@ One UTF-8 JSON object per line on stdin, with a newline terminator:
 ```json
 {"version":1,"id":1,"operation":"minify_html","documents":["<p>text</p>"]}
 ```
+
+PHP probes its serializer before the first native request. It selects
+`minify_html` for legacy libxml, `minify_html5` for HTML5 serialization without
+XML attribute prefixes, or `minify_html5_with_xml_prefixes` when those prefixes
+are preserved. Control-character edge cases use PHP directly.
 
 One flushed response line, preserving document count and order:
 
